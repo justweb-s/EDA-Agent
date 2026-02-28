@@ -9,7 +9,9 @@ from typing import cast
 from fastapi import FastAPI
 
 from eda_agent.config import EDAConfig
+from eda_agent.graph.parent.supervisor import build_supervisor_graph
 from eda_agent.models.notebook import NotebookCell
+from eda_agent.models.plan import EDAStep
 from eda_agent.tools.kernel import create_kernel
 
 from .notebook_export import export_ipynb_bytes
@@ -74,6 +76,43 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
                 "cell": cells[-1].model_dump(mode="json"),
             },
         )
+
+        supervisor = build_supervisor_graph()
+        graph_out = await asyncio.to_thread(
+            supervisor.invoke,
+            {
+                "dataset_context": rec.dataset_context,
+                "messages": [],
+            },
+        )
+        eda_plan: list[EDAStep] = list(graph_out.get("eda_plan", []))
+        if eda_plan:
+            plan_md = "## Plan\n\n"
+            for i, step in enumerate(eda_plan, start=1):
+                cols = (
+                    ", ".join(f"`{c}`" for c in step.target_columns) if step.target_columns else ""
+                )
+                cols_line = f"\\n  - **Columns**: {cols}" if cols else ""
+                plan_md += (
+                    f"{i}. **{step.section}** — {step.title}\\n  - {step.description}{cols_line}\\n"
+                )
+
+            cells.append(
+                NotebookCell(
+                    cell_type="markdown",
+                    source=plan_md,
+                    generated_at=datetime.now(UTC),
+                    re_executable=True,
+                )
+            )
+            await channel.publish(
+                "cell_added",
+                {
+                    "session_id": session_id,
+                    "n_cells": len(cells),
+                    "cell": cells[-1].model_dump(mode="json"),
+                },
+            )
 
         suffix = Path(rec.file_path).suffix.lower()
         read_stmt = (
