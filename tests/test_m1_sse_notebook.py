@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -43,6 +44,12 @@ async def test_minimal_run_produces_cells_and_notebook() -> None:
             assert nb_resp.status_code == 200
             assert nb_resp.headers["content-type"].startswith("application/x-ipynb+json")
             assert len(nb_resp.content) > 100
+
+            notebook_path = (
+                Path("./outputs") / "notebooks" / f"eda-agent-{session_id}.ipynb"
+            ).resolve()
+            assert notebook_path.exists()
+            assert notebook_path.stat().st_size > 100
 
 
 @pytest.mark.asyncio
