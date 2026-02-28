@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from typing import Annotated, cast
@@ -19,6 +20,7 @@ from ..schemas import (
     SessionListResponse,
     SessionRecordResponse,
 )
+from ..session_runner import run_minimal_session
 from ..session_store import SessionStore, new_session_record
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -69,6 +71,8 @@ async def create_session(
         dataset_context=dataset_context,
     )
     store.upsert(record)
+
+    asyncio.create_task(run_minimal_session(app=request.app, session_id=session_id))
 
     summary = DatasetContextSummary(
         file_name=dataset_context.file_name,

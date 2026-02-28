@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from eda_agent.models.dataset import DatasetContext
+from eda_agent.models.notebook import NotebookCell
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class SessionRecord:
     file_path: str
     dataset_context: DatasetContext
     n_cells: int = 0
+    notebook_cells: list[NotebookCell] | None = None
+    error: str | None = None
 
 
 class SessionStore:
@@ -46,6 +49,8 @@ class SessionStore:
             "file_path": record.file_path,
             "dataset_context": record.dataset_context.model_dump(mode="json"),
             "n_cells": record.n_cells,
+            "notebook_cells": [c.model_dump(mode="json") for c in (record.notebook_cells or [])],
+            "error": record.error,
         }
 
         path = self._path_for(record.session_id)
@@ -63,6 +68,8 @@ class SessionStore:
         with self._lock:
             payload = json.loads(path.read_text(encoding="utf-8"))
 
+        notebook_cells = [NotebookCell.model_validate(c) for c in payload.get("notebook_cells", [])]
+
         return SessionRecord(
             session_id=str(payload["session_id"]),
             status=str(payload["status"]),
@@ -71,6 +78,8 @@ class SessionStore:
             file_path=str(payload["file_path"]),
             dataset_context=DatasetContext.model_validate(payload["dataset_context"]),
             n_cells=int(payload.get("n_cells", 0)),
+            notebook_cells=notebook_cells,
+            error=payload.get("error"),
         )
 
     def list(self) -> list[SessionRecord]:
@@ -81,6 +90,10 @@ class SessionStore:
 
         for path in paths:
             payload = json.loads(path.read_text(encoding="utf-8"))
+
+            notebook_cells = [
+                NotebookCell.model_validate(c) for c in payload.get("notebook_cells", [])
+            ]
             records.append(
                 SessionRecord(
                     session_id=str(payload["session_id"]),
@@ -90,6 +103,8 @@ class SessionStore:
                     file_path=str(payload["file_path"]),
                     dataset_context=DatasetContext.model_validate(payload["dataset_context"]),
                     n_cells=int(payload.get("n_cells", 0)),
+                    notebook_cells=notebook_cells,
+                    error=payload.get("error"),
                 )
             )
 
