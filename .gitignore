@@ -1,0 +1,23 @@
+.venv/
+.ENV/
+.env
+__pycache__/
+*.pyc
+.python-version
+
+# Packaging
+build/
+dist/
+*.egg-info/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+checkpoints*.db
+uploads/
+outputs/
+*.log
+.DS_Store
