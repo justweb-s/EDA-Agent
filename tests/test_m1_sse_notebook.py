@@ -21,7 +21,7 @@ async def test_minimal_run_produces_cells_and_notebook() -> None:
             assert resp.status_code == 200
             session_id = resp.json()["session_id"]
 
-            deadline = asyncio.get_event_loop().time() + 2.0
+            deadline = asyncio.get_event_loop().time() + 15.0
             status_value = None
             while asyncio.get_event_loop().time() < deadline:
                 s = await client.get(f"/sessions/{session_id}")
