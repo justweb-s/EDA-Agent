@@ -17,6 +17,8 @@ from .routes.hitl import router as hitl_router
 from .routes.metrics import router as metrics_router
 from .routes.sessions import router as sessions_router
 from .routes.stream import router as stream_router
+from .session_store import SessionStore
+from .sse_broker import SSEBroker
 
 
 @asynccontextmanager
@@ -26,6 +28,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(config)
 
     app.state.config = config
+    app.state.session_store = SessionStore(output_dir=config.output_dir)
+    app.state.sse_broker = SSEBroker(buffer_size=config.sse_buffer_size)
     yield
 
 
