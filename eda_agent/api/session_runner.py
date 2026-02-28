@@ -12,6 +12,7 @@ from eda_agent.config import EDAConfig
 from eda_agent.models.notebook import NotebookCell
 from eda_agent.tools.kernel import create_kernel
 
+from .notebook_export import export_ipynb_bytes
 from .session_store import SessionStore
 from .sse_broker import SSEBroker
 
@@ -117,11 +118,19 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
             },
         )
 
+        notebooks_dir = (config.output_dir / "notebooks").resolve()
+        notebooks_dir.mkdir(parents=True, exist_ok=True)
+        notebook_path = (notebooks_dir / f"eda-agent-{session_id}.ipynb").resolve()
+        tmp = notebook_path.with_suffix(".ipynb.tmp")
+        tmp.write_bytes(export_ipynb_bytes(cells))
+        tmp.replace(notebook_path)
+
         completed = replace(
             rec,
             status="completed",
             n_cells=len(cells),
             notebook_cells=cells,
+            notebook_path=str(notebook_path),
             error=None,
         )
         store.upsert(completed)

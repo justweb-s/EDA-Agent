@@ -125,6 +125,7 @@ async def get_session(session_id: str, request: Request) -> SessionRecordRespons
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: str, request: Request) -> dict[str, str]:
+    config: EDAConfig = request.app.state.config
     store = _get_store(request)
     rec = store.get(session_id)
     if rec is None:
@@ -136,6 +137,17 @@ async def delete_session(session_id: str, request: Request) -> dict[str, str]:
 
     try:
         Path(rec.file_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    try:
+        default_notebook_path = (
+            config.output_dir / "notebooks" / f"eda-agent-{session_id}.ipynb"
+        ).resolve()
+        notebook_path = (
+            Path(rec.notebook_path).resolve() if rec.notebook_path else default_notebook_path
+        )
+        notebook_path.unlink(missing_ok=True)
     except Exception:
         pass
 

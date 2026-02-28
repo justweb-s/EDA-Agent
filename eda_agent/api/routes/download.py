@@ -5,10 +5,14 @@ Will be implemented once notebook assembly is wired in.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import cast
+
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
 
 from eda_agent.api.notebook_export import export_ipynb_bytes
+from eda_agent.config import EDAConfig
 
 router = APIRouter(prefix="/sessions", tags=["download"])
 
@@ -25,8 +29,16 @@ async def download_notebook(session_id: str, request: Request) -> Response:
     if rec.status != "completed":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Notebook not available")
 
-    cells = rec.notebook_cells or []
-    data = export_ipynb_bytes(cells)
+    config = cast(EDAConfig, request.app.state.config)
+    default_path = (config.output_dir / "notebooks" / f"eda-agent-{session_id}.ipynb").resolve()
+    notebook_path = Path(rec.notebook_path).resolve() if rec.notebook_path else default_path
+
+    if notebook_path.exists():
+        data = notebook_path.read_bytes()
+    else:
+        cells = rec.notebook_cells or []
+        data = export_ipynb_bytes(cells)
+
     filename = f"eda-agent-{session_id}.ipynb"
     return Response(
         content=data,

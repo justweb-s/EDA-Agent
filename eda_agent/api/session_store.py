@@ -28,6 +28,7 @@ class SessionRecord:
     dataset_context: DatasetContext
     n_cells: int = 0
     notebook_cells: list[NotebookCell] | None = None
+    notebook_path: str | None = None
     error: str | None = None
 
 
@@ -50,6 +51,7 @@ class SessionStore:
             "dataset_context": record.dataset_context.model_dump(mode="json"),
             "n_cells": record.n_cells,
             "notebook_cells": [c.model_dump(mode="json") for c in (record.notebook_cells or [])],
+            "notebook_path": record.notebook_path,
             "error": record.error,
         }
 
@@ -79,6 +81,7 @@ class SessionStore:
             dataset_context=DatasetContext.model_validate(payload["dataset_context"]),
             n_cells=int(payload.get("n_cells", 0)),
             notebook_cells=notebook_cells,
+            notebook_path=payload.get("notebook_path"),
             error=payload.get("error"),
         )
 
@@ -104,6 +107,7 @@ class SessionStore:
                     dataset_context=DatasetContext.model_validate(payload["dataset_context"]),
                     n_cells=int(payload.get("n_cells", 0)),
                     notebook_cells=notebook_cells,
+                    notebook_path=payload.get("notebook_path"),
                     error=payload.get("error"),
                 )
             )
