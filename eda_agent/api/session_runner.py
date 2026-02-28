@@ -3,21 +3,26 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI
 
-from eda_agent.ingestion.loader import load_file
-from eda_agent.models.notebook import CellOutput, NotebookCell
+from eda_agent.config import EDAConfig
+from eda_agent.models.notebook import NotebookCell
+from eda_agent.tools.kernel import create_kernel
 
 from .session_store import SessionStore
 from .sse_broker import SSEBroker
 
 
 async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
+    config = cast(EDAConfig, app.state.config)
     store = cast(SessionStore, app.state.session_store)
     broker = cast(SSEBroker, app.state.sse_broker)
     channel = await broker.get_channel(session_id)
+
+    kernel = None
 
     rec = store.get(session_id)
     if rec is None:
@@ -31,7 +36,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
         store.upsert(replace(rec, status="running", error=None))
         await channel.publish("session_started", {"session_id": session_id})
 
-        df = load_file(rec.file_path)
+        kernel = create_kernel()
+        await asyncio.to_thread(kernel.start, timeout_s=30)
 
         cells: list[NotebookCell] = []
 
@@ -68,25 +74,35 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
             },
         )
 
-        describe = df.describe(include="all").transpose().head(25)
-        describe_md = describe.to_markdown()
+        suffix = Path(rec.file_path).suffix.lower()
+        read_stmt = (
+            f'df = pd.read_excel(r"{rec.file_path}")'
+            if suffix in {".xls", ".xlsx"}
+            else f'df = pd.read_csv(r"{rec.file_path}")'
+        )
 
         code = (
             "import pandas as pd\n\n"
             f"# Source file on server: {rec.file_path}\n"
             "# Tip: place the dataset next to the notebook and adjust the path.\n\n"
-            f'df = pd.read_csv(r"{rec.file_path}")\n'
-            "df.describe(include='all').T\n"
+            f"{read_stmt}\n\n"
+            "describe = df.describe(include='all').T.head(25)\n"
+            "describe\n"
+        )
+
+        run_result = await asyncio.to_thread(
+            kernel.execute,
+            code,
+            timeout_s=config.kernel_execution_timeout,
+            max_output_mb=config.kernel_max_output_size_mb,
         )
 
         cells.append(
             NotebookCell(
                 cell_type="code",
                 source=code,
-                outputs=[
-                    CellOutput(output_type="display_data", data={"text/markdown": describe_md})
-                ],
-                execution_count=1,
+                outputs=run_result.cell_outputs,
+                execution_count=run_result.execution_count,
                 step_id="overview",
                 generated_at=datetime.now(UTC),
                 re_executable=False,
@@ -125,5 +141,10 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
         await channel.publish("session_failed", {"session_id": session_id, "error": str(e)})
 
     finally:
+        if kernel is not None:
+            try:
+                await asyncio.to_thread(kernel.shutdown)
+            except Exception:
+                pass
         await channel.close()
         await asyncio.sleep(0)
