@@ -40,6 +40,11 @@ async def test_minimal_run_produces_cells_and_notebook() -> None:
             assert isinstance(cells, list)
             assert len(cells) >= 2
 
+            assert any(
+                (c.get("cell_type") == "markdown") and ("## Plan" in str(c.get("source", "")))
+                for c in cells
+            )
+
             nb_resp = await client.get(f"/sessions/{session_id}/notebook")
             assert nb_resp.status_code == 200
             assert nb_resp.headers["content-type"].startswith("application/x-ipynb+json")
