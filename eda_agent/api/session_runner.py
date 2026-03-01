@@ -8,6 +8,8 @@ from typing import cast
 
 from fastapi import FastAPI
 
+from eda_agent.api.event_translator import EventTranslator
+from eda_agent.checkpointing.setup import build_checkpointer, checkpointer_metadata
 from eda_agent.config import EDAConfig
 from eda_agent.graph.parent.supervisor import build_supervisor_graph
 from eda_agent.models.notebook import NotebookCell
@@ -26,6 +28,7 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
     channel = await broker.get_channel(session_id)
 
     kernel = None
+    checkpointer = None
 
     rec = store.get(session_id)
     if rec is None:
@@ -77,15 +80,60 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
             },
         )
 
-        supervisor = build_supervisor_graph()
-        graph_out = await asyncio.to_thread(
-            supervisor.invoke,
-            {
-                "dataset_context": rec.dataset_context,
-                "messages": [],
-            },
-        )
-        eda_plan: list[EDAStep] = list(graph_out.get("eda_plan", []))
+        checkpointer = build_checkpointer(config)
+        supervisor = build_supervisor_graph(checkpointer=checkpointer)
+        translator = EventTranslator()
+
+        graph_input = {
+            "dataset_context": rec.dataset_context,
+            "messages": [],
+        }
+        runnable_config = {
+            "configurable": {"thread_id": session_id},
+            "metadata": checkpointer_metadata(config, session_id, rec.file_name),
+        }
+
+        loop = asyncio.get_running_loop()
+
+        plan_event_emitted = False
+
+        def _run_graph_stream() -> None:
+            nonlocal plan_event_emitted
+            for ev in supervisor.stream(
+                graph_input,
+                runnable_config,
+                stream_mode="updates",
+                subgraphs=True,
+            ):
+                for sse_event, data in translator.translate(ev):
+                    if sse_event == "plan_generated":
+                        plan_event_emitted = True
+                    fut = asyncio.run_coroutine_threadsafe(
+                        channel.publish(sse_event, {"session_id": session_id, **data}),
+                        loop,
+                    )
+                    fut.result(timeout=30)
+
+        await asyncio.to_thread(_run_graph_stream)
+
+        snapshot = await asyncio.to_thread(supervisor.get_state, runnable_config)
+        values = cast(dict, getattr(snapshot, "values", {}))
+        eda_plan_raw = list(values.get("eda_plan", []))
+        eda_plan: list[EDAStep] = [
+            (step if isinstance(step, EDAStep) else EDAStep.model_validate(step))
+            for step in eda_plan_raw
+        ]
+
+        if eda_plan and not plan_event_emitted:
+            await channel.publish(
+                "plan_generated",
+                {
+                    "session_id": session_id,
+                    "eda_plan": [s.model_dump(mode="json") for s in eda_plan],
+                    "n_steps": len(eda_plan),
+                },
+            )
+
         if eda_plan:
             plan_md = "## Plan\n\n"
             for i, step in enumerate(eda_plan, start=1):
@@ -192,6 +240,13 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
         if kernel is not None:
             try:
                 await asyncio.to_thread(kernel.shutdown)
+            except Exception:
+                pass
+        if checkpointer is not None:
+            try:
+                conn = getattr(checkpointer, "conn", None)
+                if conn is not None:
+                    await asyncio.to_thread(conn.close)
             except Exception:
                 pass
         await channel.close()

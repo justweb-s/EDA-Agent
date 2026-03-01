@@ -83,3 +83,4 @@ async def test_sse_stream_emits_completion() -> None:
 
             assert "session_completed" in events
             assert "cell_added" in events
+            assert "plan_generated" in events
