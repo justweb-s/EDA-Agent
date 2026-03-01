@@ -25,7 +25,7 @@ def build_checkpointer(config: EDAConfig) -> BaseCheckpointSaver:
     if backend == "sqlite":
         from langgraph.checkpoint.sqlite import SqliteSaver
 
-        conn = sqlite3.connect(str(config.sqlite_path))
+        conn = sqlite3.connect(str(config.sqlite_path), check_same_thread=False)
         return SqliteSaver(conn)
 
     raise ValueError(f"Unsupported checkpoint backend: {backend}")
