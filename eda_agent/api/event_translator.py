@@ -17,14 +17,43 @@ class EventTranslator:
 
     def translate(self, event: object) -> list[tuple[str, dict]]:
         if isinstance(event, tuple) and len(event) == 2:
-            mode, payload = event
-            if mode == "updates":
-                event = payload
+            first, second = event
+            if first == "updates":
+                event = second
+            elif isinstance(second, dict):
+                event = second
 
         if not isinstance(event, dict):
             return []
 
         out: list[tuple[str, dict]] = []
+
+        if "__interrupt__" in event:
+            interrupt_payload = event.get("__interrupt__")
+            items: list[object]
+            if isinstance(interrupt_payload, tuple):
+                items = list(interrupt_payload)
+            elif interrupt_payload is None:
+                items = []
+            else:
+                items = [interrupt_payload]
+
+            for item in items:
+                out.append(
+                    (
+                        "hitl_interrupt",
+                        {
+                            "interrupt": {
+                                "value": getattr(item, "value", item),
+                                "resumable": getattr(item, "resumable", None),
+                                "ns": getattr(item, "ns", None),
+                                "when": getattr(item, "when", None),
+                            }
+                        },
+                    )
+                )
+            return out
+
         for _, update in event.items():
             if not isinstance(update, dict):
                 continue

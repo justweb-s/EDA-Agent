@@ -18,6 +18,7 @@ class EDAState(TypedDict, total=False):
     messages: list[AnyMessage]
     dataset_context: DatasetContext
     eda_plan: list[EDAStep]
+    hitl_plan_approval: dict | None
     current_step_index: int
     notebook_cells: list[NotebookCell]
     execution_history: list[ExecutionSummary]

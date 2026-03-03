@@ -30,6 +30,8 @@ async def stream_session(
             payload = json.dumps(msg.data, ensure_ascii=False)
             chunk = f"id: {msg.message_id}\nevent: {msg.event}\ndata: {payload}\n\n"
             yield chunk.encode("utf-8")
+            if msg.event in {"session_completed", "session_failed", "session_suspended"}:
+                return
 
     return StreamingResponse(
         event_gen(),

@@ -17,6 +17,7 @@ dist/
 htmlcov/
 .ipynb_checkpoints/
 checkpoints*.db
+.tmp*.db
 uploads/
 outputs/
 *.log

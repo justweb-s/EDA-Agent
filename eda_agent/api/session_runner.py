@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI
+from langgraph.types import Command
 
 from eda_agent.api.event_translator import EventTranslator
 from eda_agent.checkpointing.setup import build_checkpointer, checkpointer_metadata
@@ -21,7 +22,9 @@ from .session_store import SessionStore
 from .sse_broker import SSEBroker
 
 
-async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
+async def run_minimal_session(
+    *, app: FastAPI, session_id: str, resume: dict | None = None
+) -> None:
     config = cast(EDAConfig, app.state.config)
     store = cast(SessionStore, app.state.session_store)
     broker = cast(SSEBroker, app.state.sse_broker)
@@ -29,6 +32,7 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
 
     kernel = None
     checkpointer = None
+    should_close_channel = True
 
     rec = store.get(session_id)
     if rec is None:
@@ -42,63 +46,68 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
         store.upsert(replace(rec, status="running", error=None))
         await channel.publish("session_started", {"session_id": session_id})
 
-        kernel = create_kernel()
-        await asyncio.to_thread(kernel.start, timeout_s=30)
+        cells: list[NotebookCell] = list(rec.notebook_cells or [])
 
-        cells: list[NotebookCell] = []
-
-        overview_md = (
-            f"# EDA Agent\n\n"
-            f"**File**: `{rec.file_name}`\n\n"
-            f"**Shape**: `{rec.dataset_context.shape[0]}` rows x "
-            f"`{rec.dataset_context.shape[1]}` columns\n\n"
-            f"## Detected issues\n\n"
-        )
-        if rec.dataset_context.detected_issues:
-            for issue in rec.dataset_context.detected_issues:
-                col = f" (`{issue.column}`)" if issue.column else ""
-                overview_md += (
-                    f"- **{issue.severity.upper()}** `{issue.code}`{col}: {issue.message}\n"
-                )
-        else:
-            overview_md += "- None\n"
-
-        cells.append(
-            NotebookCell(
-                cell_type="markdown",
-                source=overview_md,
-                generated_at=datetime.now(UTC),
-                re_executable=True,
+        if not cells:
+            overview_md = (
+                f"# EDA Agent\n\n"
+                f"**File**: `{rec.file_name}`\n\n"
+                f"**Shape**: `{rec.dataset_context.shape[0]}` rows x "
+                f"`{rec.dataset_context.shape[1]}` columns\n\n"
+                f"## Detected issues\n\n"
             )
-        )
-        await channel.publish(
-            "cell_added",
-            {
-                "session_id": session_id,
-                "n_cells": len(cells),
-                "cell": cells[-1].model_dump(mode="json"),
-            },
-        )
+            if rec.dataset_context.detected_issues:
+                for issue in rec.dataset_context.detected_issues:
+                    col = f" (`{issue.column}`)" if issue.column else ""
+                    overview_md += (
+                        f"- **{issue.severity.upper()}** `{issue.code}`{col}: {issue.message}\n"
+                    )
+            else:
+                overview_md += "- None\n"
+
+            cells.append(
+                NotebookCell(
+                    cell_type="markdown",
+                    source=overview_md,
+                    generated_at=datetime.now(UTC),
+                    re_executable=True,
+                )
+            )
+            await channel.publish(
+                "cell_added",
+                {
+                    "session_id": session_id,
+                    "n_cells": len(cells),
+                    "cell": cells[-1].model_dump(mode="json"),
+                },
+            )
 
         checkpointer = build_checkpointer(config)
         supervisor = build_supervisor_graph(checkpointer=checkpointer)
         translator = EventTranslator()
 
-        graph_input = {
+        hitl_enabled = config.hitl_default_mode != "none"
+
+        graph_input: dict | Command = {
             "dataset_context": rec.dataset_context,
             "messages": [],
+            "hitl_enabled": hitl_enabled,
         }
         runnable_config = {
             "configurable": {"thread_id": session_id},
             "metadata": checkpointer_metadata(config, session_id, rec.file_name),
         }
 
+        if resume is not None:
+            graph_input = Command(resume=resume)
+
         loop = asyncio.get_running_loop()
 
         plan_event_emitted = False
+        interrupt_event_emitted = False
 
         def _run_graph_stream() -> None:
-            nonlocal plan_event_emitted
+            nonlocal plan_event_emitted, interrupt_event_emitted
             for ev in supervisor.stream(
                 graph_input,
                 runnable_config,
@@ -108,6 +117,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
                 for sse_event, data in translator.translate(ev):
                     if sse_event == "plan_generated":
                         plan_event_emitted = True
+                    if sse_event == "hitl_interrupt":
+                        interrupt_event_emitted = True
                     fut = asyncio.run_coroutine_threadsafe(
                         channel.publish(sse_event, {"session_id": session_id, **data}),
                         loop,
@@ -118,6 +129,39 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
 
         snapshot = await asyncio.to_thread(supervisor.get_state, runnable_config)
         values = cast(dict, getattr(snapshot, "values", {}))
+
+        pending_interrupt: dict | None = None
+        for task in getattr(snapshot, "tasks", ()) or ():
+            interrupts = getattr(task, "interrupts", ()) or ()
+            for it in interrupts:
+                pending_interrupt = {
+                    "value": getattr(it, "value", it),
+                    "resumable": getattr(it, "resumable", None),
+                    "ns": getattr(it, "ns", None),
+                    "when": getattr(it, "when", None),
+                }
+                break
+            if pending_interrupt is not None:
+                break
+
+        if resume is None and (interrupt_event_emitted or pending_interrupt is not None):
+            if pending_interrupt is not None and not interrupt_event_emitted:
+                await channel.publish(
+                    "hitl_interrupt",
+                    {"session_id": session_id, "interrupt": pending_interrupt},
+                )
+            suspended = replace(
+                rec,
+                status="suspended",
+                n_cells=len(cells),
+                notebook_cells=cells,
+                error=None,
+            )
+            store.upsert(suspended)
+            await channel.publish("session_suspended", {"session_id": session_id})
+            should_close_channel = False
+            return
+
         eda_plan_raw = list(values.get("eda_plan", []))
         eda_plan: list[EDAStep] = [
             (step if isinstance(step, EDAStep) else EDAStep.model_validate(step))
@@ -162,6 +206,9 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
                 },
             )
 
+        kernel = create_kernel()
+        await asyncio.to_thread(kernel.start, timeout_s=30)
+
         suffix = Path(rec.file_path).suffix.lower()
         read_stmt = (
             f'df = pd.read_excel(r"{rec.file_path}")'
@@ -204,6 +251,108 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
                 "cell": cells[-1].model_dump(mode="json"),
             },
         )
+
+        for step in eda_plan:
+            step_md = f"## {step.section}: {step.title}\n\n{step.description}\n"
+            if step.target_columns:
+                step_md += "\n**Columns**: " + ", ".join(f"`{c}`" for c in step.target_columns) + "\n"
+
+            cells.append(
+                NotebookCell(
+                    cell_type="markdown",
+                    source=step_md,
+                    generated_at=datetime.now(UTC),
+                    re_executable=True,
+                    step_id=step.step_id,
+                )
+            )
+            await channel.publish(
+                "cell_added",
+                {
+                    "session_id": session_id,
+                    "n_cells": len(cells),
+                    "cell": cells[-1].model_dump(mode="json"),
+                },
+            )
+
+            cols = list(step.target_columns or [])
+            cols_expr = repr(cols)
+            if step.analysis_type == "data_quality":
+                step_code = (
+                    "missing = df.isna().mean().sort_values(ascending=False).head(15)\n"
+                    "duplicates = int(df.duplicated().sum())\n"
+                    "missing\n\n"
+                    "print('duplicate_rows:', duplicates)\n"
+                )
+            elif step.analysis_type == "bivariate":
+                step_code = (
+                    f"cols = {cols_expr}\n"
+                    "use = [c for c in cols if c in df.columns]\n"
+                    "numeric = df[use].select_dtypes(include='number')\n"
+                    "corr = numeric.corr(numeric_only=True)\n"
+                    "corr\n"
+                )
+            elif step.analysis_type == "feature_specific":
+                step_code = (
+                    f"cols = {cols_expr}\n"
+                    "use = [c for c in cols if c in df.columns]\n"
+                    "out = {}\n"
+                    "for c in use:\n"
+                    "    s = df[c]\n"
+                    "    if s.dtype == 'object':\n"
+                    "        s2 = pd.to_datetime(s, errors='coerce')\n"
+                    "    else:\n"
+                    "        s2 = pd.to_datetime(s, errors='coerce')\n"
+                    "    out[c] = {'n_parsed': int(s2.notna().sum()), 'min': str(s2.min()), 'max': str(s2.max())}\n"
+                    "out\n"
+                )
+            elif step.analysis_type == "univariate":
+                step_code = (
+                    f"cols = {cols_expr}\n"
+                    "use = [c for c in cols if c in df.columns]\n"
+                    "summary = {}\n"
+                    "for c in use:\n"
+                    "    s = df[c]\n"
+                    "    if s.dtype.kind in {'i','u','f'}:\n"
+                    "        summary[c] = s.describe().to_dict()\n"
+                    "    else:\n"
+                    "        summary[c] = s.astype('string').value_counts(dropna=False).head(15).to_dict()\n"
+                    "summary\n"
+                )
+            else:
+                step_code = (
+                    f"cols = {cols_expr}\n"
+                    "use = [c for c in cols if c in df.columns]\n"
+                    "df[use].head(10)\n"
+                )
+
+            step_code = f"import pandas as pd\n\n{step_code}"
+            step_result = await asyncio.to_thread(
+                kernel.execute,
+                step_code,
+                timeout_s=config.kernel_execution_timeout,
+                max_output_mb=config.kernel_max_output_size_mb,
+            )
+
+            cells.append(
+                NotebookCell(
+                    cell_type="code",
+                    source=step_code,
+                    outputs=step_result.cell_outputs,
+                    execution_count=step_result.execution_count,
+                    step_id=step.step_id,
+                    generated_at=datetime.now(UTC),
+                    re_executable=False,
+                )
+            )
+            await channel.publish(
+                "cell_added",
+                {
+                    "session_id": session_id,
+                    "n_cells": len(cells),
+                    "cell": cells[-1].model_dump(mode="json"),
+                },
+            )
 
         notebooks_dir = (config.output_dir / "notebooks").resolve()
         notebooks_dir.mkdir(parents=True, exist_ok=True)
@@ -249,5 +398,6 @@ async def run_minimal_session(*, app: FastAPI, session_id: str) -> None:
                     await asyncio.to_thread(conn.close)
             except Exception:
                 pass
-        await channel.close()
+        if should_close_channel:
+            await channel.close()
         await asyncio.sleep(0)

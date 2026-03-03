@@ -10,7 +10,11 @@ from eda_agent.api.main import app
 
 
 @pytest.mark.asyncio
-async def test_minimal_run_produces_cells_and_notebook() -> None:
+async def test_minimal_run_produces_cells_and_notebook(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -45,20 +49,30 @@ async def test_minimal_run_produces_cells_and_notebook() -> None:
                 for c in cells
             )
 
+            assert any(
+                (c.get("cell_type") == "markdown")
+                and (c.get("step_id") in {"data_quality", "univariate_numeric", "univariate_categorical"})
+                for c in cells
+            )
+
             nb_resp = await client.get(f"/sessions/{session_id}/notebook")
             assert nb_resp.status_code == 200
             assert nb_resp.headers["content-type"].startswith("application/x-ipynb+json")
             assert len(nb_resp.content) > 100
 
             notebook_path = (
-                Path("./outputs") / "notebooks" / f"eda-agent-{session_id}.ipynb"
+                (tmp_path / "outputs") / "notebooks" / f"eda-agent-{session_id}.ipynb"
             ).resolve()
             assert notebook_path.exists()
             assert notebook_path.stat().st_size > 100
 
 
 @pytest.mark.asyncio
-async def test_sse_stream_emits_completion() -> None:
+async def test_sse_stream_emits_completion(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -84,3 +98,78 @@ async def test_sse_stream_emits_completion() -> None:
             assert "session_completed" in events
             assert "cell_added" in events
             assert "plan_generated" in events
+
+
+@pytest.mark.asyncio
+async def test_download_notebook_conflict_then_ok(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            csv_bytes = b"a,b\n1,2\n3,4\n"
+            resp = await client.post(
+                "/sessions",
+                files={"file": ("data.csv", csv_bytes, "text/csv")},
+            )
+            assert resp.status_code == 200
+            session_id = resp.json()["session_id"]
+
+            early = await client.get(f"/sessions/{session_id}/notebook")
+            assert early.status_code == 409
+
+            deadline = asyncio.get_event_loop().time() + 15.0
+            status_value = None
+            while asyncio.get_event_loop().time() < deadline:
+                s = await client.get(f"/sessions/{session_id}")
+                assert s.status_code == 200
+                status_value = s.json()["status"]
+                if status_value in {"completed", "failed"}:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert status_value == "completed"
+
+            ok = await client.get(f"/sessions/{session_id}/notebook")
+            assert ok.status_code == 200
+            assert ok.headers["content-type"].startswith("application/x-ipynb+json")
+            assert len(ok.content) > 100
+
+
+@pytest.mark.asyncio
+async def test_delete_session_removes_record(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            csv_bytes = b"a,b\n1,2\n3,4\n"
+            resp = await client.post(
+                "/sessions",
+                files={"file": ("data.csv", csv_bytes, "text/csv")},
+            )
+            assert resp.status_code == 200
+            session_id = resp.json()["session_id"]
+
+            deadline = asyncio.get_event_loop().time() + 15.0
+            status_value = None
+            while asyncio.get_event_loop().time() < deadline:
+                s = await client.get(f"/sessions/{session_id}")
+                assert s.status_code == 200
+                status_value = s.json()["status"]
+                if status_value in {"completed", "failed"}:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert status_value == "completed"
+
+            deleted = await client.delete(f"/sessions/{session_id}")
+            assert deleted.status_code == 200
+            assert deleted.json()["status"] == "deleted"
+
+            missing = await client.get(f"/sessions/{session_id}")
+            assert missing.status_code == 404
