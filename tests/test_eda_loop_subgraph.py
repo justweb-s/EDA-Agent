@@ -8,31 +8,31 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from eda_agent.graph.parent.supervisor import build_supervisor_graph
 from eda_agent.models.dataset import BasicStats, ColumnInfo, DatasetContext
-from eda_agent.models.notebook import NotebookCell
 from eda_agent.models.session import SessionMetadata
 
 
 def _fake_dataset_context(tmp_path: Path) -> DatasetContext:
-    file_path = str((tmp_path / "data.csv").resolve())
+    file_path = (tmp_path / "data.csv").resolve()
+    file_path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
     return DatasetContext(
-        file_path=file_path,
+        file_path=str(file_path),
         file_name="data.csv",
-        shape=(3, 2),
+        shape=(2, 2),
         columns=[
             ColumnInfo(
                 name="a",
                 dtype="int64",
                 n_null=0,
-                n_unique=3,
-                sample_values=["1", "2", "3"],
+                n_unique=2,
+                sample_values=["1", "3"],
                 detected_semantic_type="numeric",
             ),
             ColumnInfo(
                 name="b",
                 dtype="int64",
                 n_null=0,
-                n_unique=3,
-                sample_values=["2", "4", "6"],
+                n_unique=2,
+                sample_values=["2", "4"],
                 detected_semantic_type="numeric",
             ),
         ],
@@ -44,18 +44,20 @@ def _fake_dataset_context(tmp_path: Path) -> DatasetContext:
     )
 
 
-def test_supervisor_assembler_writes_notebook(
+def test_supervisor_runs_eda_loop_and_assembles_notebook(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("HITL_DEFAULT_MODE", "none")
 
     checkpointer = MemorySaver()
     supervisor = build_supervisor_graph(checkpointer=checkpointer)
 
-    session_id = "s-assembler"
+    session_id = "s-eda-loop"
     config = {"configurable": {"thread_id": session_id}}
 
     ctx = _fake_dataset_context(tmp_path)
+
     meta = SessionMetadata(
         session_id=session_id,
         started_at=datetime.now(UTC),
@@ -64,36 +66,30 @@ def test_supervisor_assembler_writes_notebook(
         file_name=ctx.file_name,
     )
 
-    cells = [
-        NotebookCell(
-            cell_type="markdown",
-            source="# Hello",
-            generated_at=datetime.now(UTC),
-            re_executable=True,
-        )
-    ]
-
-    assembler_config = supervisor.update_state(
-        config,
+    out = supervisor.invoke(
         {
             "dataset_context": ctx,
             "messages": [],
             "hitl_enabled": False,
             "session_metadata": meta,
-            "notebook_cells": cells,
-            "current_step_index": 999,
-            "eda_plan": [],
         },
-        as_node="plan_approval",
+        config,
     )
 
-    out = supervisor.invoke(None, assembler_config)
+    notebook_cells = list(out.get("notebook_cells", []))
+    assert notebook_cells
+    assert any(
+        (getattr(c, "cell_type", None) == "markdown")
+        and ("## Plan" in str(getattr(c, "source", "")))
+        for c in notebook_cells
+    )
+
     notebook_path = str(out.get("final_notebook_path") or "")
     assert notebook_path
 
     path = Path(notebook_path)
     assert path.exists()
-    assert path.stat().st_size > 50
+    assert path.stat().st_size > 100
 
     expected = ((tmp_path / "outputs") / "notebooks" / f"eda-agent-{session_id}.ipynb").resolve()
     assert path.resolve() == expected

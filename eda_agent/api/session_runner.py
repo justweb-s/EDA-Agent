@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI
@@ -44,7 +43,10 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
         store.upsert(replace(rec, status="running", error=None))
         await channel.publish("session_started", {"session_id": session_id})
 
-        cells: list[NotebookCell] = list(rec.notebook_cells or [])
+        cells: list[NotebookCell] = [
+            (cell if isinstance(cell, NotebookCell) else NotebookCell.model_validate(cell))
+            for cell in list(rec.notebook_cells or [])
+        ]
 
         if not cells:
             overview_md = (
@@ -86,6 +88,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
 
         hitl_enabled = config.hitl_default_mode != "none"
 
+        translator._last_n_cells = len(cells)
+
         session_metadata = SessionMetadata(
             session_id=session_id,
             started_at=rec.created_at,
@@ -99,13 +103,23 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
             "messages": [],
             "hitl_enabled": hitl_enabled,
             "session_metadata": session_metadata,
+            "notebook_cells": cells,
+            "current_step_index": 0,
+            "execution_history": [],
         }
         runnable_config = {
             "configurable": {"thread_id": session_id},
             "metadata": checkpointer_metadata(config, session_id, rec.file_name),
         }
 
+        kernel = create_kernel()
+        await asyncio.to_thread(kernel.start, timeout_s=30)
+        runnable_config["configurable"]["kernel"] = kernel
+
         if resume is not None:
+            snapshot0 = await asyncio.to_thread(supervisor.get_state, runnable_config)
+            values0 = cast(dict, getattr(snapshot0, "values", {}))
+            translator._last_n_cells = len(list(values0.get("notebook_cells", [])))
             graph_input = Command(resume=resume)
 
         loop = asyncio.get_running_loop()
@@ -185,199 +199,13 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
                 },
             )
 
-        if eda_plan:
-            plan_md = "## Plan\n\n"
-            for i, step in enumerate(eda_plan, start=1):
-                cols = (
-                    ", ".join(f"`{c}`" for c in step.target_columns) if step.target_columns else ""
-                )
-                cols_line = f"\\n  - **Columns**: {cols}" if cols else ""
-                plan_md += (
-                    f"{i}. **{step.section}** — {step.title}\\n  - {step.description}{cols_line}\\n"
-                )
+        notebook_cells_raw = list(values.get("notebook_cells", []))
+        cells = [
+            (cell if isinstance(cell, NotebookCell) else NotebookCell.model_validate(cell))
+            for cell in notebook_cells_raw
+        ]
 
-            cells.append(
-                NotebookCell(
-                    cell_type="markdown",
-                    source=plan_md,
-                    generated_at=datetime.now(UTC),
-                    re_executable=True,
-                )
-            )
-            await channel.publish(
-                "cell_added",
-                {
-                    "session_id": session_id,
-                    "n_cells": len(cells),
-                    "cell": cells[-1].model_dump(mode="json"),
-                },
-            )
-
-        kernel = create_kernel()
-        await asyncio.to_thread(kernel.start, timeout_s=30)
-
-        suffix = Path(rec.file_path).suffix.lower()
-        read_stmt = (
-            f'df = pd.read_excel(r"{rec.file_path}")'
-            if suffix in {".xls", ".xlsx"}
-            else f'df = pd.read_csv(r"{rec.file_path}")'
-        )
-
-        code = (
-            "import pandas as pd\n\n"
-            f"# Source file on server: {rec.file_path}\n"
-            "# Tip: place the dataset next to the notebook and adjust the path.\n\n"
-            f"{read_stmt}\n\n"
-            "describe = df.describe(include='all').T.head(25)\n"
-            "describe\n"
-        )
-
-        run_result = await asyncio.to_thread(
-            kernel.execute,
-            code,
-            timeout_s=config.kernel_execution_timeout,
-            max_output_mb=config.kernel_max_output_size_mb,
-        )
-
-        cells.append(
-            NotebookCell(
-                cell_type="code",
-                source=code,
-                outputs=run_result.cell_outputs,
-                execution_count=run_result.execution_count,
-                step_id="overview",
-                generated_at=datetime.now(UTC),
-                re_executable=False,
-            )
-        )
-        await channel.publish(
-            "cell_added",
-            {
-                "session_id": session_id,
-                "n_cells": len(cells),
-                "cell": cells[-1].model_dump(mode="json"),
-            },
-        )
-
-        for step in eda_plan:
-            step_md = f"## {step.section}: {step.title}\n\n{step.description}\n"
-            if step.target_columns:
-                step_md += (
-                    "\n**Columns**: " + ", ".join(f"`{c}`" for c in step.target_columns) + "\n"
-                )
-
-            cells.append(
-                NotebookCell(
-                    cell_type="markdown",
-                    source=step_md,
-                    generated_at=datetime.now(UTC),
-                    re_executable=True,
-                    step_id=step.step_id,
-                )
-            )
-            await channel.publish(
-                "cell_added",
-                {
-                    "session_id": session_id,
-                    "n_cells": len(cells),
-                    "cell": cells[-1].model_dump(mode="json"),
-                },
-            )
-
-            step_cols = list(step.target_columns or [])
-            cols_expr = repr(step_cols)
-            if step.analysis_type == "data_quality":
-                step_code = (
-                    "missing = df.isna().mean().sort_values(ascending=False).head(15)\n"
-                    "duplicates = int(df.duplicated().sum())\n"
-                    "missing\n\n"
-                    "print('duplicate_rows:', duplicates)\n"
-                )
-            elif step.analysis_type == "bivariate":
-                step_code = (
-                    f"cols = {cols_expr}\n"
-                    "use = [c for c in cols if c in df.columns]\n"
-                    "numeric = df[use].select_dtypes(include='number')\n"
-                    "corr = numeric.corr(numeric_only=True)\n"
-                    "corr\n"
-                )
-            elif step.analysis_type == "feature_specific":
-                step_code = (
-                    f"cols = {cols_expr}\n"
-                    "use = [c for c in cols if c in df.columns]\n"
-                    "out = {}\n"
-                    "for c in use:\n"
-                    "    s = df[c]\n"
-                    "    if s.dtype == 'object':\n"
-                    "        s2 = pd.to_datetime(s, errors='coerce')\n"
-                    "    else:\n"
-                    "        s2 = pd.to_datetime(s, errors='coerce')\n"
-                    "    out[c] = {'n_parsed': int(s2.notna().sum()), "
-                    "'min': str(s2.min()), 'max': str(s2.max())}\n"
-                    "out\n"
-                )
-            elif step.analysis_type == "univariate":
-                step_code = (
-                    f"cols = {cols_expr}\n"
-                    "use = [c for c in cols if c in df.columns]\n"
-                    "summary = {}\n"
-                    "for c in use:\n"
-                    "    s = df[c]\n"
-                    "    if s.dtype.kind in {'i','u','f'}:\n"
-                    "        summary[c] = s.describe().to_dict()\n"
-                    "    else:\n"
-                    "        summary[c] = s.astype('string').value_counts(dropna=False).head(15)"
-                    ".to_dict()\n"
-                    "summary\n"
-                )
-            else:
-                step_code = (
-                    f"cols = {cols_expr}\n"
-                    "use = [c for c in cols if c in df.columns]\n"
-                    "df[use].head(10)\n"
-                )
-
-            step_code = f"import pandas as pd\n\n{step_code}"
-            step_result = await asyncio.to_thread(
-                kernel.execute,
-                step_code,
-                timeout_s=config.kernel_execution_timeout,
-                max_output_mb=config.kernel_max_output_size_mb,
-            )
-
-            cells.append(
-                NotebookCell(
-                    cell_type="code",
-                    source=step_code,
-                    outputs=step_result.cell_outputs,
-                    execution_count=step_result.execution_count,
-                    step_id=step.step_id,
-                    generated_at=datetime.now(UTC),
-                    re_executable=False,
-                )
-            )
-            await channel.publish(
-                "cell_added",
-                {
-                    "session_id": session_id,
-                    "n_cells": len(cells),
-                    "cell": cells[-1].model_dump(mode="json"),
-                },
-            )
-
-        assembler_config = await asyncio.to_thread(
-            supervisor.update_state,
-            runnable_config,
-            {"notebook_cells": cells},
-            "plan_approval",
-        )
-        assembled = await asyncio.to_thread(supervisor.invoke, None, assembler_config)
-        notebook_path = str(assembled.get("final_notebook_path") or "")
-        if notebook_path:
-            await channel.publish(
-                "analysis_completed",
-                {"session_id": session_id, "notebook_path": notebook_path},
-            )
+        notebook_path = str(values.get("final_notebook_path") or "")
 
         completed = replace(
             rec,
