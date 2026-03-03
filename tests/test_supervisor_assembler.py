@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import pytest
-
-from pathlib import Path
-
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from eda_agent.graph.parent.supervisor import build_supervisor_graph

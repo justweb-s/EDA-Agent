@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 from eda_agent.api.session_store import SessionStore, new_session_record
 from eda_agent.models.dataset import BasicStats, ColumnInfo, DatasetContext
