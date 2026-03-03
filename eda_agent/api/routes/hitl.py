@@ -9,7 +9,7 @@ import asyncio
 from dataclasses import replace
 from typing import Any, cast
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from eda_agent.checkpointing.setup import build_checkpointer
@@ -45,7 +45,7 @@ async def get_interrupt(session_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="No interrupt state available",
-        )
+        ) from None
     finally:
         try:
             conn = getattr(checkpointer, "conn", None)
@@ -80,7 +80,7 @@ async def get_interrupt(session_id: str, request: Request) -> dict[str, Any]:
 async def resume_session(
     session_id: str,
     request: Request,
-    payload: ResumeRequest = Body(...),
+    payload: ResumeRequest,
 ) -> dict[str, Any]:
     store = cast(SessionStore | None, getattr(request.app.state, "session_store", None))
     if store is None:

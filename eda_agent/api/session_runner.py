@@ -17,6 +17,7 @@ from eda_agent.models.notebook import NotebookCell
 from eda_agent.models.plan import EDAStep
 from eda_agent.models.session import SessionMetadata
 from eda_agent.tools.kernel import create_kernel
+
 from .session_store import SessionStore
 from .sse_broker import SSEBroker
 
@@ -311,7 +312,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
                     "        s2 = pd.to_datetime(s, errors='coerce')\n"
                     "    else:\n"
                     "        s2 = pd.to_datetime(s, errors='coerce')\n"
-                    "    out[c] = {'n_parsed': int(s2.notna().sum()), 'min': str(s2.min()), 'max': str(s2.max())}\n"
+                    "    out[c] = {'n_parsed': int(s2.notna().sum()), "
+                    "'min': str(s2.min()), 'max': str(s2.max())}\n"
                     "out\n"
                 )
             elif step.analysis_type == "univariate":
@@ -324,7 +326,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
                     "    if s.dtype.kind in {'i','u','f'}:\n"
                     "        summary[c] = s.describe().to_dict()\n"
                     "    else:\n"
-                    "        summary[c] = s.astype('string').value_counts(dropna=False).head(15).to_dict()\n"
+                    "        summary[c] = s.astype('string').value_counts(dropna=False).head(15)"
+                    ".to_dict()\n"
                     "summary\n"
                 )
             else:
