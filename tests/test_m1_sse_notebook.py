@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import httpx
@@ -103,6 +104,62 @@ async def test_sse_stream_emits_completion(tmp_path: Path, monkeypatch: pytest.M
             assert "session_completed" in events
             assert "cell_added" in events
             assert "plan_generated" in events
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_does_not_duplicate_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            csv_bytes = b"a,b\n1,2\n3,4\n"
+            resp = await client.post(
+                "/sessions",
+                files={"file": ("data.csv", csv_bytes, "text/csv")},
+            )
+            assert resp.status_code == 200
+            session_id = resp.json()["session_id"]
+
+            seen: set[tuple[str, str, str]] = set()
+            duplicates: list[tuple[str, str, str]] = []
+
+            async with client.stream("GET", f"/sessions/{session_id}/stream") as sse:
+                assert sse.status_code == 200
+
+                current_event: str | None = None
+                async for line in sse.aiter_lines():
+                    if not line:
+                        continue
+
+                    if line.startswith("event:"):
+                        current_event = line.split(":", 1)[1].strip()
+                        continue
+
+                    if current_event != "cell_added":
+                        continue
+
+                    if not line.startswith("data:"):
+                        continue
+
+                    payload = line.split(":", 1)[1].strip()
+                    data = json.loads(payload)
+                    cell = data.get("cell") or {}
+                    key = (
+                        str(cell.get("cell_type") or ""),
+                        str(cell.get("source") or ""),
+                        str(cell.get("step_id") or ""),
+                    )
+                    if key in seen:
+                        duplicates.append(key)
+                    else:
+                        seen.add(key)
+
+            assert not duplicates
 
 
 @pytest.mark.asyncio

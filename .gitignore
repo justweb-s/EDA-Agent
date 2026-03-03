@@ -22,3 +22,5 @@ uploads/
 outputs/
 *.log
 .DS_Store
+
+.windsurf/
