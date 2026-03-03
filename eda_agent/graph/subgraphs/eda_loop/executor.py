@@ -48,6 +48,7 @@ def executor_node(*args: Any, **kwargs: Any) -> Any:
         kernel.start(timeout_s=30)
 
     try:
+
         def _run() -> Any:
             return kernel.execute(
                 generated_code,
@@ -69,9 +70,7 @@ def executor_node(*args: Any, **kwargs: Any) -> Any:
                 except Exception as retry_err:  # noqa: BLE001
                     return {
                         "execution_count": None,
-                        "cell_outputs": [
-                            CellOutput(output_type="error", text=str(retry_err))
-                        ],
+                        "cell_outputs": [CellOutput(output_type="error", text=str(retry_err))],
                         "execution_result": ExecutionResult(
                             stdout="",
                             stderr=str(retry_err),
