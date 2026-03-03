@@ -9,6 +9,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from eda_agent.graph.coercion import (
+    coerce_cells,
+    coerce_dataset_context,
+    coerce_execution_history,
+    coerce_plan,
+)
 from eda_agent.graph.parent.assembler import assemble_notebook
 from eda_agent.graph.parent.router import route_next
 from eda_agent.graph.parent.state import EDAState
@@ -26,10 +32,12 @@ def build_supervisor_graph(
     graph = StateGraph(EDAState)
 
     def run_critic(state: EDAState, config: RunnableConfig) -> dict[str, Any]:
+        dataset_context = coerce_dataset_context(state.get("dataset_context"))
+        notebook_cells = coerce_cells(state.get("notebook_cells", []))
         out: Any = critic.invoke(
             {
-                "notebook_cells": state.get("notebook_cells", []),
-                "dataset_context": state.get("dataset_context"),
+                "notebook_cells": notebook_cells,
+                "dataset_context": dataset_context,
                 "section_name": "all",
             },
             config,
@@ -37,13 +45,17 @@ def build_supervisor_graph(
         return {"critic_feedback": out.get("critic_feedback")}
 
     def run_eda_loop(state: EDAState, config: RunnableConfig) -> dict[str, Any]:
+        dataset_context = coerce_dataset_context(state.get("dataset_context"))
+        eda_plan = coerce_plan(state.get("eda_plan", []))
+        notebook_cells = coerce_cells(state.get("notebook_cells", []))
+        execution_history = coerce_execution_history(state.get("execution_history", []))
         out: Any = eda_loop.invoke(
             {
-                "eda_plan": state.get("eda_plan", []),
+                "eda_plan": eda_plan,
                 "current_step_index": int(state.get("current_step_index", 0)),
-                "dataset_context": state.get("dataset_context"),
-                "notebook_cells": state.get("notebook_cells", []),
-                "execution_history": state.get("execution_history", []),
+                "dataset_context": dataset_context,
+                "notebook_cells": notebook_cells,
+                "execution_history": execution_history,
             },
             config,
         )
@@ -54,11 +66,13 @@ def build_supervisor_graph(
         }
 
     def run_planner(state: EDAState) -> EDAState:
+        dataset_context = coerce_dataset_context(state.get("dataset_context"))
+        eda_plan = coerce_plan(state.get("eda_plan", []))
         out: Any = planner.invoke(
             {
                 "messages": state.get("messages", []),
-                "dataset_context": state.get("dataset_context"),
-                "eda_plan": state.get("eda_plan", []),
+                "dataset_context": dataset_context,
+                "eda_plan": eda_plan,
             }
         )
         return {
@@ -71,13 +85,12 @@ def build_supervisor_graph(
         if not state.get("hitl_enabled", False):
             return dict(state)
 
+        eda_plan = coerce_plan(state.get("eda_plan", []))
+
         resume_value = interrupt(
             {
                 "type": "plan_approval",
-                "eda_plan": [
-                    (s.model_dump(mode="json") if hasattr(s, "model_dump") else s)
-                    for s in state.get("eda_plan", [])
-                ],
+                "eda_plan": [s.model_dump(mode="json") for s in eda_plan],
             }
         )
         return {**state, "hitl_plan_approval": resume_value}

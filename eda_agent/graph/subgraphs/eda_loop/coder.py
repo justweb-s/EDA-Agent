@@ -5,14 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+from eda_agent.graph.coercion import coerce_dataset_context, coerce_step
 from eda_agent.graph.subgraphs.eda_loop.state import EDALoopState
 
 
 def coder_node(*args: Any, **kwargs: Any) -> Any:
     state = cast(EDALoopState, args[0] if args else kwargs.get("state"))
 
-    step = state.get("current_step")
-    dataset_context = state.get("dataset_context")
+    step = coerce_step(state.get("current_step"))
+    dataset_context = coerce_dataset_context(state.get("dataset_context"))
     if step is None or dataset_context is None:
         return {"generated_code": "raise ValueError('Missing current_step or dataset_context')"}
 

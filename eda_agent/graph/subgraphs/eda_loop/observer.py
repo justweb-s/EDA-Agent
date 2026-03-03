@@ -6,6 +6,12 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from eda_agent.config import EDAConfig
+from eda_agent.graph.coercion import (
+    coerce_cells,
+    coerce_execution_history,
+    coerce_execution_result,
+    coerce_step,
+)
 from eda_agent.graph.subgraphs.eda_loop.state import EDALoopState
 from eda_agent.models.execution import ExecutionSummary
 from eda_agent.models.notebook import NotebookCell
@@ -14,8 +20,8 @@ from eda_agent.models.notebook import NotebookCell
 def observer_node(*args: Any, **kwargs: Any) -> Any:
     state = cast(EDALoopState, args[0] if args else kwargs.get("state"))
 
-    step = state.get("current_step")
-    execution = state.get("execution_result")
+    step = coerce_step(state.get("current_step"))
+    execution = coerce_execution_result(state.get("execution_result"))
     if step is None or execution is None:
         return {
             "observer_verdict": "fatal_error",
@@ -36,7 +42,7 @@ def observer_node(*args: Any, **kwargs: Any) -> Any:
                 "local_retry_count": local_retry_count + 1,
             }
 
-        notebook_cells = list(state.get("notebook_cells", []))
+        notebook_cells = coerce_cells(state.get("notebook_cells", []))
 
         step_md = f"## {step.section}: {step.title}\n\n{step.description}\n"
         notebook_cells.append(
@@ -61,7 +67,7 @@ def observer_node(*args: Any, **kwargs: Any) -> Any:
             )
         )
 
-        execution_history = list(state.get("execution_history", []))
+        execution_history = coerce_execution_history(state.get("execution_history", []))
         execution_history.append(
             ExecutionSummary(
                 step_id=step.step_id,
@@ -82,7 +88,7 @@ def observer_node(*args: Any, **kwargs: Any) -> Any:
             "retry_messages": [],
         }
 
-    notebook_cells = list(state.get("notebook_cells", []))
+    notebook_cells = coerce_cells(state.get("notebook_cells", []))
 
     step_md = f"## {step.section}: {step.title}\n\n{step.description}\n"
     if step.target_columns:
@@ -111,7 +117,7 @@ def observer_node(*args: Any, **kwargs: Any) -> Any:
         )
     )
 
-    execution_history = list(state.get("execution_history", []))
+    execution_history = coerce_execution_history(state.get("execution_history", []))
     stdout = (execution.stdout or "").strip()
     findings = stdout.splitlines()[0] if stdout else "Step executed successfully."
     summary = ExecutionSummary(
