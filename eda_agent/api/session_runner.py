@@ -284,8 +284,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
                 },
             )
 
-            cols = list(step.target_columns or [])
-            cols_expr = repr(cols)
+            step_cols = list(step.target_columns or [])
+            cols_expr = repr(step_cols)
             if step.analysis_type == "data_quality":
                 step_code = (
                     "missing = df.isna().mean().sort_values(ascending=False).head(15)\n"

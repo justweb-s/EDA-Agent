@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+from pathlib import Path
+
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -43,7 +47,9 @@ def _fake_dataset_context(tmp_path: Path) -> DatasetContext:
     )
 
 
-def test_supervisor_assembler_writes_notebook(tmp_path, monkeypatch) -> None:
+def test_supervisor_assembler_writes_notebook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
 
     checkpointer = MemorySaver()

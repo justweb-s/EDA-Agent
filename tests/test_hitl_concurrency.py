@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 
 import httpx
@@ -8,7 +10,7 @@ import pytest
 from eda_agent.api.main import app
 
 
-def _apply_test_env(monkeypatch, tmp_path) -> None:
+def _apply_test_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HITL_DEFAULT_MODE", "plan_only")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -21,7 +23,7 @@ async def _create_session(client: httpx.AsyncClient, *, csv_bytes: bytes) -> str
         files={"file": ("data.csv", csv_bytes, "text/csv")},
     )
     assert resp.status_code == 200
-    return resp.json()["session_id"]
+    return str(resp.json()["session_id"])
 
 
 async def _wait_for_status(
@@ -58,7 +60,9 @@ async def _read_until_suspended(
 
 
 @pytest.mark.asyncio
-async def test_two_sessions_suspend_without_interference(tmp_path, monkeypatch) -> None:
+async def test_two_sessions_suspend_without_interference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):

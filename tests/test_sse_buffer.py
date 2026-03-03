@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 
 import httpx
@@ -8,7 +10,7 @@ import pytest
 from eda_agent.api.main import app
 
 
-def _apply_test_env(monkeypatch, tmp_path) -> None:
+def _apply_test_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HITL_DEFAULT_MODE", "none")
     monkeypatch.setenv("SSE_BUFFER_SIZE", "1")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
@@ -17,7 +19,9 @@ def _apply_test_env(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_small_sse_buffer_still_replays_terminal_event(tmp_path, monkeypatch) -> None:
+async def test_small_sse_buffer_still_replays_terminal_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):

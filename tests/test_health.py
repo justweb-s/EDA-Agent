@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -42,7 +44,9 @@ async def test_metrics_endpoint_ok() -> None:
 
 
 @pytest.mark.asyncio
-async def test_api_key_enforced_in_production(tmp_path, monkeypatch) -> None:
+async def test_api_key_enforced_in_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("API_KEY", "secret")
     monkeypatch.setenv("LLM_PROVIDER", "ollama")

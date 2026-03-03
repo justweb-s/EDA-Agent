@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 
 import httpx
@@ -9,7 +11,9 @@ from eda_agent.api.main import app
 
 
 @pytest.mark.asyncio
-async def test_minimal_run_produces_cells_and_notebook(tmp_path, monkeypatch) -> None:
+async def test_minimal_run_produces_cells_and_notebook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
@@ -70,7 +74,7 @@ async def test_minimal_run_produces_cells_and_notebook(tmp_path, monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_sse_stream_emits_completion(tmp_path, monkeypatch) -> None:
+async def test_sse_stream_emits_completion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
@@ -103,7 +107,9 @@ async def test_sse_stream_emits_completion(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_notebook_conflict_then_ok(tmp_path, monkeypatch) -> None:
+async def test_download_notebook_conflict_then_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
@@ -141,7 +147,9 @@ async def test_download_notebook_conflict_then_ok(tmp_path, monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_delete_session_removes_record(tmp_path, monkeypatch) -> None:
+async def test_delete_session_removes_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))

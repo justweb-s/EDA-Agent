@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 
 import httpx
@@ -9,7 +11,7 @@ from eda_agent.api.main import app
 
 
 @pytest.mark.asyncio
-async def test_hitl_interrupt_and_resume(tmp_path, monkeypatch) -> None:
+async def test_hitl_interrupt_and_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HITL_DEFAULT_MODE", "plan_only")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -101,7 +103,9 @@ async def test_hitl_interrupt_and_resume(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_returns_409_when_not_suspended(tmp_path, monkeypatch) -> None:
+async def test_resume_returns_409_when_not_suspended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HITL_DEFAULT_MODE", "none")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))

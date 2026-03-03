@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -8,7 +10,7 @@ from eda_agent.models.dataset import BasicStats, ColumnInfo, DatasetContext
 from eda_agent.models.notebook import NotebookCell
 
 
-def _fake_dataset_context(tmp_path) -> DatasetContext:
+def _fake_dataset_context(tmp_path: Path) -> DatasetContext:
     file_path = str((tmp_path / "data.csv").resolve())
     return DatasetContext(
         file_path=file_path,
@@ -40,7 +42,7 @@ def _fake_dataset_context(tmp_path) -> DatasetContext:
     )
 
 
-def test_session_store_roundtrip(tmp_path) -> None:
+def test_session_store_roundtrip(tmp_path: Path) -> None:
     store = SessionStore(output_dir=(tmp_path / "outputs"))
 
     ctx = _fake_dataset_context(tmp_path)

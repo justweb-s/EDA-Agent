@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import asyncio
 
 import httpx
@@ -8,7 +10,7 @@ import pytest
 from eda_agent.api.main import app
 
 
-def _apply_test_env(monkeypatch, tmp_path) -> None:
+def _apply_test_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HITL_DEFAULT_MODE", "none")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -16,7 +18,9 @@ def _apply_test_env(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_session_requires_file_field(tmp_path, monkeypatch) -> None:
+async def test_create_session_requires_file_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):
@@ -31,7 +35,9 @@ async def test_create_session_requires_file_field(tmp_path, monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_create_session_rejects_unsupported_extension(tmp_path, monkeypatch) -> None:
+async def test_create_session_rejects_unsupported_extension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):
@@ -46,7 +52,9 @@ async def test_create_session_rejects_unsupported_extension(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_download_and_cells_404_for_unknown_session(tmp_path, monkeypatch) -> None:
+async def test_download_and_cells_404_for_unknown_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):
@@ -62,7 +70,7 @@ async def test_download_and_cells_404_for_unknown_session(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_hitl_endpoints_error_paths(tmp_path, monkeypatch) -> None:
+async def test_hitl_endpoints_error_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):
@@ -99,7 +107,9 @@ async def test_hitl_endpoints_error_paths(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_sessions_and_delete_unknown(tmp_path, monkeypatch) -> None:
+async def test_list_sessions_and_delete_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):
@@ -116,7 +126,9 @@ async def test_list_sessions_and_delete_unknown(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_schema_validation_422(tmp_path, monkeypatch) -> None:
+async def test_resume_schema_validation_422(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _apply_test_env(monkeypatch, tmp_path)
 
     async with app.router.lifespan_context(app):
