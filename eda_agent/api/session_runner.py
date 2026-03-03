@@ -112,19 +112,22 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
             "metadata": checkpointer_metadata(config, session_id, rec.file_name),
         }
 
-        kernel = create_kernel()
-        await asyncio.to_thread(kernel.start, timeout_s=30)
-        runnable_config["configurable"]["kernel"] = kernel
-
         if resume is not None:
+            graph_input = Command(resume=resume)
+
             snapshot0 = await asyncio.to_thread(supervisor.get_state, runnable_config)
             values0 = cast(dict, getattr(snapshot0, "values", {}))
             translator._last_n_cells = len(list(values0.get("notebook_cells", [])))
-            graph_input = Command(resume=resume)
+
+        needs_kernel = (resume is not None) or (not hitl_enabled)
+        if needs_kernel:
+            kernel = create_kernel()
+            await asyncio.to_thread(kernel.start, timeout_s=30)
+            runnable_config["configurable"]["kernel"] = kernel
 
         loop = asyncio.get_running_loop()
 
-        plan_event_emitted = False
+        plan_event_emitted = resume is not None
         interrupt_event_emitted = False
 
         def _run_graph_stream() -> None:
@@ -137,8 +140,12 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
             ):
                 for sse_event, data in translator.translate(ev):
                     if sse_event == "plan_generated":
+                        if plan_event_emitted:
+                            continue
                         plan_event_emitted = True
                     if sse_event == "hitl_interrupt":
+                        if interrupt_event_emitted:
+                            continue
                         interrupt_event_emitted = True
                     fut = asyncio.run_coroutine_threadsafe(
                         channel.publish(sse_event, {"session_id": session_id, **data}),
@@ -150,6 +157,12 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
 
         snapshot = await asyncio.to_thread(supervisor.get_state, runnable_config)
         values = cast(dict, getattr(snapshot, "values", {}))
+
+        notebook_cells_raw = list(values.get("notebook_cells", []))
+        cells_from_graph: list[NotebookCell] = [
+            (cell if isinstance(cell, NotebookCell) else NotebookCell.model_validate(cell))
+            for cell in notebook_cells_raw
+        ]
 
         pending_interrupt: dict | None = None
         for task in getattr(snapshot, "tasks", ()) or ():
@@ -174,8 +187,8 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
             suspended = replace(
                 rec,
                 status="suspended",
-                n_cells=len(cells),
-                notebook_cells=cells,
+                n_cells=len(cells_from_graph),
+                notebook_cells=cells_from_graph,
                 error=None,
             )
             store.upsert(suspended)
@@ -189,7 +202,7 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
             for step in eda_plan_raw
         ]
 
-        if eda_plan and not plan_event_emitted:
+        if resume is None and eda_plan and not plan_event_emitted:
             await channel.publish(
                 "plan_generated",
                 {
@@ -199,11 +212,7 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
                 },
             )
 
-        notebook_cells_raw = list(values.get("notebook_cells", []))
-        cells = [
-            (cell if isinstance(cell, NotebookCell) else NotebookCell.model_validate(cell))
-            for cell in notebook_cells_raw
-        ]
+        cells = cells_from_graph
 
         notebook_path = str(values.get("final_notebook_path") or "")
 

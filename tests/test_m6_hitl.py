@@ -83,6 +83,7 @@ async def test_hitl_interrupt_and_resume(tmp_path: Path, monkeypatch: pytest.Mon
                         if ev == "session_completed":
                             break
 
+            assert "plan_generated" not in new_events
             assert "session_completed" in new_events
 
             deadline = asyncio.get_event_loop().time() + 15.0
