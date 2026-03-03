@@ -9,4 +9,8 @@ from eda_agent.graph.parent.state import EDAState
 
 
 def route_next(state: EDAState) -> str:
-    raise NotImplementedError
+    if state.get("final_notebook_path"):
+        return "__end__"
+    if state.get("notebook_cells"):
+        return "assembler"
+    return "__end__"

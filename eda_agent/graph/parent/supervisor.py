@@ -8,6 +8,8 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from eda_agent.graph.parent.assembler import assemble_notebook
+from eda_agent.graph.parent.router import route_next
 from eda_agent.graph.parent.state import EDAState
 from eda_agent.graph.subgraphs.planner.graph import build_planner_subgraph
 
@@ -49,8 +51,17 @@ def build_supervisor_graph(
 
     graph.add_node("planner", run_planner)
     graph.add_node("plan_approval", plan_approval)
+    graph.add_node("assembler", assemble_notebook)
     graph.set_entry_point("planner")
     graph.add_edge("planner", "plan_approval")
-    graph.add_edge("plan_approval", END)
+    graph.add_conditional_edges(
+        "plan_approval",
+        route_next,
+        {
+            "assembler": "assembler",
+            "__end__": END,
+        },
+    )
+    graph.add_edge("assembler", END)
 
     return graph.compile(checkpointer=checkpointer)
