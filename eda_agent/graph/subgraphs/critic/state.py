@@ -13,4 +13,5 @@ class CriticState(TypedDict, total=False):
     notebook_cells: list[NotebookCell]
     dataset_context: DatasetContext
     section_name: str
+    cells_analyzed: list[NotebookCell]
     critic_feedback: CriticReview

@@ -12,6 +12,7 @@ from langgraph.types import interrupt
 from eda_agent.graph.parent.assembler import assemble_notebook
 from eda_agent.graph.parent.router import route_next
 from eda_agent.graph.parent.state import EDAState
+from eda_agent.graph.subgraphs.critic.graph import build_critic_subgraph
 from eda_agent.graph.subgraphs.eda_loop.graph import build_eda_loop_subgraph
 from eda_agent.graph.subgraphs.planner.graph import build_planner_subgraph
 
@@ -21,7 +22,19 @@ def build_supervisor_graph(
 ) -> Any:
     planner = build_planner_subgraph()
     eda_loop = build_eda_loop_subgraph()
+    critic = build_critic_subgraph()
     graph = StateGraph(EDAState)
+
+    def run_critic(state: EDAState, config: RunnableConfig) -> dict[str, Any]:
+        out: Any = critic.invoke(
+            {
+                "notebook_cells": state.get("notebook_cells", []),
+                "dataset_context": state.get("dataset_context"),
+                "section_name": "all",
+            },
+            config,
+        )
+        return {"critic_feedback": out.get("critic_feedback")}
 
     def run_eda_loop(state: EDAState, config: RunnableConfig) -> dict[str, Any]:
         out: Any = eda_loop.invoke(
@@ -72,6 +85,7 @@ def build_supervisor_graph(
     graph.add_node("planner", run_planner)
     graph.add_node("plan_approval", plan_approval)
     graph.add_node("eda_loop", run_eda_loop)
+    graph.add_node("critic", run_critic)
     graph.add_node("assembler", assemble_notebook)
     graph.set_entry_point("planner")
     graph.add_edge("planner", "plan_approval")
@@ -84,7 +98,8 @@ def build_supervisor_graph(
             "__end__": END,
         },
     )
-    graph.add_edge("eda_loop", "assembler")
+    graph.add_edge("eda_loop", "critic")
+    graph.add_edge("critic", "assembler")
     graph.add_edge("assembler", END)
 
     return graph.compile(checkpointer=checkpointer)
