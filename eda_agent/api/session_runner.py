@@ -21,9 +21,7 @@ from .session_store import SessionStore
 from .sse_broker import SSEBroker
 
 
-async def run_minimal_session(
-    *, app: FastAPI, session_id: str, resume: dict | None = None
-) -> None:
+async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | None = None) -> None:
     config = cast(EDAConfig, app.state.config)
     store = cast(SessionStore, app.state.session_store)
     broker = cast(SSEBroker, app.state.sse_broker)
@@ -263,7 +261,9 @@ async def run_minimal_session(
         for step in eda_plan:
             step_md = f"## {step.section}: {step.title}\n\n{step.description}\n"
             if step.target_columns:
-                step_md += "\n**Columns**: " + ", ".join(f"`{c}`" for c in step.target_columns) + "\n"
+                step_md += (
+                    "\n**Columns**: " + ", ".join(f"`{c}`" for c in step.target_columns) + "\n"
+                )
 
             cells.append(
                 NotebookCell(

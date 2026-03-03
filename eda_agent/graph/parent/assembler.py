@@ -16,12 +16,16 @@ def assemble_notebook(*args: Any, **kwargs: Any) -> Any:
     config = EDAConfig()
 
     session_metadata = state.get("session_metadata")
-    session_id = getattr(session_metadata, "session_id", None) if session_metadata is not None else None
+    session_id = (
+        getattr(session_metadata, "session_id", None) if session_metadata is not None else None
+    )
     if not session_id:
         session_id = "unknown"
 
     cells_raw = state.get("notebook_cells") or []
-    cells = [c if isinstance(c, NotebookCell) else NotebookCell.model_validate(c) for c in cells_raw]
+    cells = [
+        c if isinstance(c, NotebookCell) else NotebookCell.model_validate(c) for c in cells_raw
+    ]
 
     notebooks_dir = (config.output_dir / "notebooks").resolve()
     notebooks_dir.mkdir(parents=True, exist_ok=True)

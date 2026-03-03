@@ -24,7 +24,9 @@ async def _create_session(client: httpx.AsyncClient, *, csv_bytes: bytes) -> str
     return resp.json()["session_id"]
 
 
-async def _wait_for_status(client: httpx.AsyncClient, *, session_id: str, status: str, timeout_s: float) -> None:
+async def _wait_for_status(
+    client: httpx.AsyncClient, *, session_id: str, status: str, timeout_s: float
+) -> None:
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:
         s = await client.get(f"/sessions/{session_id}")
@@ -35,7 +37,9 @@ async def _wait_for_status(client: httpx.AsyncClient, *, session_id: str, status
     raise AssertionError(f"Timed out waiting for status={status} session_id={session_id}")
 
 
-async def _read_until_suspended(client: httpx.AsyncClient, *, session_id: str, timeout_s: float) -> list[str]:
+async def _read_until_suspended(
+    client: httpx.AsyncClient, *, session_id: str, timeout_s: float
+) -> list[str]:
     events: list[str] = []
 
     async def _run() -> None:
@@ -65,8 +69,12 @@ async def test_two_sessions_suspend_without_interference(tmp_path, monkeypatch) 
                 _create_session(client, csv_bytes=b"x,y\n5,6\n7,8\n"),
             )
 
-            ev1_task = asyncio.create_task(_read_until_suspended(client, session_id=s1, timeout_s=15.0))
-            ev2_task = asyncio.create_task(_read_until_suspended(client, session_id=s2, timeout_s=15.0))
+            ev1_task = asyncio.create_task(
+                _read_until_suspended(client, session_id=s1, timeout_s=15.0)
+            )
+            ev2_task = asyncio.create_task(
+                _read_until_suspended(client, session_id=s2, timeout_s=15.0)
+            )
             ev1, ev2 = await asyncio.gather(ev1_task, ev2_task)
 
             assert "hitl_interrupt" in ev1

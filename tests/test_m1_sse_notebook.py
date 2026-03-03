@@ -51,7 +51,10 @@ async def test_minimal_run_produces_cells_and_notebook(tmp_path, monkeypatch) ->
 
             assert any(
                 (c.get("cell_type") == "markdown")
-                and (c.get("step_id") in {"data_quality", "univariate_numeric", "univariate_categorical"})
+                and (
+                    c.get("step_id")
+                    in {"data_quality", "univariate_numeric", "univariate_categorical"}
+                )
                 for c in cells
             )
 
