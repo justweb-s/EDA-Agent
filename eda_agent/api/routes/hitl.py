@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from eda_agent.checkpointing.setup import build_checkpointer
 from eda_agent.config import EDAConfig
@@ -25,7 +25,34 @@ router = APIRouter(prefix="/sessions", tags=["hitl"])
 class ResumeRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    resume: dict[str, Any]
+    resume: dict[str, Any] | None = None
+    interrupt_id: str | None = None
+    action: str | None = None
+    data: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _validate_payload(self) -> ResumeRequest:
+        if self.resume is None and self.action is None:
+            raise ValueError("Either 'resume' or 'action' must be provided")
+        if self.resume is None and self.action is not None:
+            if self.action not in {"approve", "reject", "modify"}:
+                raise ValueError("Unsupported action")
+        return self
+
+    def to_resume_value(self) -> dict[str, Any]:
+        if self.resume is not None:
+            return dict(self.resume)
+
+        if self.action is None:
+            raise ValueError("Either 'resume' or 'action' must be provided")
+
+        data = dict(self.data or {})
+        if self.action == "approve":
+            return {"approved": True, **data}
+        if self.action == "reject":
+            return {"approved": False, **data}
+
+        return {"approved": True, "modified": True, **data}
 
 
 @router.get("/{session_id}/interrupt")
@@ -95,9 +122,13 @@ async def resume_session(
             detail=f"Session is not suspended (status={rec.status})",
         )
 
-    store.upsert(replace(rec, status="running", error=None))
+    store.upsert(replace(rec, status="in_progress", error=None))
     asyncio.create_task(
-        run_minimal_session(app=request.app, session_id=session_id, resume=payload.resume)
+        run_minimal_session(
+            app=request.app,
+            session_id=session_id,
+            resume=payload.to_resume_value(),
+        )
     )
 
     return {"session_id": session_id, "status": "resuming"}

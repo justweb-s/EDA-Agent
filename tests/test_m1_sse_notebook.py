@@ -239,3 +239,53 @@ async def test_delete_session_removes_record(
 
             missing = await client.get(f"/sessions/{session_id}")
             assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_session_accepts_form_config_and_emits_in_session_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            csv_bytes = b"a,b\n1,2\n3,4\n"
+            resp = await client.post(
+                "/sessions",
+                files={"file": ("data.csv", csv_bytes, "text/csv")},
+                data={
+                    "provider": "mock",
+                    "model": "mock-model",
+                    "mode": "auto",
+                    "hitl_enabled": "false",
+                    "user_instructions": "Focus on column a",
+                },
+            )
+            assert resp.status_code == 200
+            session_id = resp.json()["session_id"]
+
+            started_payload = None
+            current_event: str | None = None
+            async with client.stream("GET", f"/sessions/{session_id}/stream") as sse:
+                async for line in sse.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("event:"):
+                        current_event = line.split(":", 1)[1].strip()
+                        continue
+                    if current_event != "session_started":
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    started_payload = json.loads(line.split(":", 1)[1].strip())
+                    break
+
+            assert started_payload is not None
+            assert started_payload.get("session_id") == session_id
+            assert started_payload.get("llm_provider") == "mock"
+            assert started_payload.get("llm_model") == "mock-model"
+            assert started_payload.get("mode") == "auto"
+            assert started_payload.get("hitl_enabled") is False

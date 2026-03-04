@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import FastAPI
+from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
 from eda_agent.api.event_translator import EventTranslator
@@ -40,8 +41,18 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
         return
 
     try:
-        store.upsert(replace(rec, status="running", error=None))
-        await channel.publish("session_started", {"session_id": session_id})
+        store.upsert(replace(rec, status="in_progress", error=None))
+        await channel.publish(
+            "session_started",
+            {
+                "session_id": session_id,
+                "dataset_name": rec.file_name,
+                "llm_provider": rec.llm_provider,
+                "llm_model": rec.llm_model,
+                "mode": rec.mode,
+                "hitl_enabled": rec.hitl_enabled,
+            },
+        )
 
         cells: list[NotebookCell] = [
             (cell if isinstance(cell, NotebookCell) else NotebookCell.model_validate(cell))
@@ -79,6 +90,13 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
                     "session_id": session_id,
                     "n_cells": len(cells),
                     "cell": cells[-1].model_dump(mode="json"),
+                    "cell_type": "markdown",
+                    "content": overview_md,
+                    "outputs": [],
+                    "step_id": None,
+                    "execution_count": None,
+                    "generated_at": cells[-1].generated_at.isoformat(),
+                    "re_executable": True,
                 },
             )
 
@@ -86,21 +104,26 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
         supervisor = build_supervisor_graph(checkpointer=checkpointer)
         translator = EventTranslator()
 
-        hitl_enabled = config.hitl_default_mode != "none"
+        hitl_enabled = bool(rec.hitl_enabled)
 
         translator._last_n_cells = len(cells)
 
         session_metadata = SessionMetadata(
             session_id=session_id,
             started_at=rec.created_at,
-            llm_provider=config.llm_provider,
-            llm_model=config.llm_model,
+            llm_provider=rec.llm_provider,
+            llm_model=rec.llm_model,
             file_name=rec.file_name,
         )
 
+        messages = []
+        if rec.user_instructions:
+            messages = [HumanMessage(content=str(rec.user_instructions))]
+
         graph_input: dict | Command = {
             "dataset_context": rec.dataset_context,
-            "messages": [],
+            "messages": messages,
+            "mode": rec.mode,
             "hitl_enabled": hitl_enabled,
             "session_metadata": session_metadata,
             "notebook_cells": cells,
@@ -109,7 +132,13 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
         }
         runnable_config = {
             "configurable": {"thread_id": session_id},
-            "metadata": checkpointer_metadata(config, session_id, rec.file_name),
+            "metadata": checkpointer_metadata(
+                config,
+                session_id,
+                rec.file_name,
+                llm_provider=rec.llm_provider,
+                llm_model=rec.llm_model,
+            ),
         }
 
         if resume is not None:
@@ -180,9 +209,24 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
 
         if resume is None and (interrupt_event_emitted or pending_interrupt is not None):
             if pending_interrupt is not None and not interrupt_event_emitted:
+                interrupt_value = pending_interrupt.get("value")
+                interrupt_type = None
+                if isinstance(interrupt_value, dict):
+                    interrupt_type = interrupt_value.get("type")
+
+                available_actions: list[str] = []
+                if interrupt_type == "plan_approval":
+                    available_actions = ["approve", "reject", "modify"]
+
                 await channel.publish(
                     "hitl_interrupt",
-                    {"session_id": session_id, "interrupt": pending_interrupt},
+                    {
+                        "session_id": session_id,
+                        "interrupt": pending_interrupt,
+                        "interrupt_type": interrupt_type,
+                        "data": interrupt_value,
+                        "available_actions": available_actions,
+                    },
                 )
             suspended = replace(
                 rec,
@@ -226,6 +270,16 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
         )
         store.upsert(completed)
 
+        if notebook_path:
+            await channel.publish(
+                "analysis_completed",
+                {
+                    "session_id": session_id,
+                    "notebook_path": notebook_path,
+                    "n_cells": len(cells),
+                },
+            )
+
         await channel.publish(
             "session_completed",
             {"session_id": session_id, "n_cells": len(cells)},
@@ -238,6 +292,19 @@ async def run_minimal_session(*, app: FastAPI, session_id: str, resume: dict | N
             error=str(e),
         )
         store.upsert(failed)
+        await channel.publish(
+            "error",
+            {
+                "session_id": session_id,
+                "error": {
+                    "code": "SESSION_FAILED",
+                    "message": str(e),
+                    "details": {"session_id": session_id},
+                    "recoverable": False,
+                    "suggested_action": "Inspect server logs",
+                },
+            },
+        )
         await channel.publish("session_failed", {"session_id": session_id, "error": str(e)})
 
     finally:

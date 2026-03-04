@@ -31,12 +31,19 @@ def build_checkpointer(config: EDAConfig) -> BaseCheckpointSaver:
     raise ValueError(f"Unsupported checkpoint backend: {backend}")
 
 
-def checkpointer_metadata(config: EDAConfig, session_id: str, file_name: str) -> dict[str, Any]:
+def checkpointer_metadata(
+    config: EDAConfig,
+    session_id: str,
+    file_name: str,
+    *,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+) -> dict[str, Any]:
     """Return standard LangSmith/LangGraph metadata for a run config."""
 
     return {
         "session_id": session_id,
         "dataset_name": file_name,
-        "llm_provider": config.llm_provider,
-        "llm_model": config.llm_model,
+        "llm_provider": llm_provider or config.llm_provider,
+        "llm_model": llm_model or config.llm_model,
     }
