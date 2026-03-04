@@ -26,6 +26,11 @@ class SessionRecord:
     file_name: str
     file_path: str
     dataset_context: DatasetContext
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o"
+    mode: str = "auto"
+    hitl_enabled: bool = False
+    user_instructions: str | None = None
     n_cells: int = 0
     notebook_cells: list[NotebookCell] | None = None
     notebook_path: str | None = None
@@ -49,6 +54,11 @@ class SessionStore:
             "file_name": record.file_name,
             "file_path": record.file_path,
             "dataset_context": record.dataset_context.model_dump(mode="json"),
+            "llm_provider": record.llm_provider,
+            "llm_model": record.llm_model,
+            "mode": record.mode,
+            "hitl_enabled": record.hitl_enabled,
+            "user_instructions": record.user_instructions,
             "n_cells": record.n_cells,
             "notebook_cells": [c.model_dump(mode="json") for c in (record.notebook_cells or [])],
             "notebook_path": record.notebook_path,
@@ -79,6 +89,11 @@ class SessionStore:
             file_name=str(payload["file_name"]),
             file_path=str(payload["file_path"]),
             dataset_context=DatasetContext.model_validate(payload["dataset_context"]),
+            llm_provider=str(payload.get("llm_provider") or "openai"),
+            llm_model=str(payload.get("llm_model") or "gpt-4o"),
+            mode=str(payload.get("mode") or "auto"),
+            hitl_enabled=bool(payload.get("hitl_enabled") or False),
+            user_instructions=payload.get("user_instructions"),
             n_cells=int(payload.get("n_cells", 0)),
             notebook_cells=notebook_cells,
             notebook_path=payload.get("notebook_path"),
@@ -105,6 +120,11 @@ class SessionStore:
                     file_name=str(payload["file_name"]),
                     file_path=str(payload["file_path"]),
                     dataset_context=DatasetContext.model_validate(payload["dataset_context"]),
+                    llm_provider=str(payload.get("llm_provider") or "openai"),
+                    llm_model=str(payload.get("llm_model") or "gpt-4o"),
+                    mode=str(payload.get("mode") or "auto"),
+                    hitl_enabled=bool(payload.get("hitl_enabled") or False),
+                    user_instructions=payload.get("user_instructions"),
                     n_cells=int(payload.get("n_cells", 0)),
                     notebook_cells=notebook_cells,
                     notebook_path=payload.get("notebook_path"),
@@ -132,6 +152,11 @@ def new_session_record(
     file_name: str,
     file_path: str,
     dataset_context: DatasetContext,
+    llm_provider: str = "openai",
+    llm_model: str = "gpt-4o",
+    mode: str = "auto",
+    hitl_enabled: bool = False,
+    user_instructions: str | None = None,
 ) -> SessionRecord:
     return SessionRecord(
         session_id=session_id,
@@ -140,5 +165,10 @@ def new_session_record(
         file_name=file_name,
         file_path=file_path,
         dataset_context=dataset_context,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        mode=mode,
+        hitl_enabled=hitl_enabled,
+        user_instructions=user_instructions,
         n_cells=0,
     )

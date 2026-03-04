@@ -73,12 +73,13 @@ def build_supervisor_graph(
                 "messages": state.get("messages", []),
                 "dataset_context": dataset_context,
                 "eda_plan": eda_plan,
+                "session_metadata": state.get("session_metadata"),
             }
         )
         return {
             **state,
             "eda_plan": out.get("eda_plan", []),
-            "messages": out.get("messages", []),
+            "messages": out.get("messages", state.get("messages", [])),
         }
 
     def plan_approval(state: EDAState) -> dict[str, Any]:

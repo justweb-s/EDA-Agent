@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 
 from eda_agent.config import EDAConfig
 from eda_agent.ingestion.loader import load_file
@@ -39,6 +39,11 @@ def _get_store(request: Request) -> SessionStore:
 async def create_session(
     request: Request,
     file: Annotated[UploadFile, File(...)],
+    provider: Annotated[str | None, Form()] = None,
+    model: Annotated[str | None, Form()] = None,
+    mode: Annotated[str | None, Form()] = None,
+    hitl_enabled: Annotated[bool | None, Form()] = None,
+    user_instructions: Annotated[str | None, Form()] = None,
 ) -> SessionCreateResponse:
     config: EDAConfig = request.app.state.config
 
@@ -48,6 +53,20 @@ async def create_session(
     suffix = Path(file.filename).suffix.lower()
     if suffix not in {".csv", ".xls", ".xlsx"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type")
+
+    llm_provider = (provider or config.llm_provider).strip().lower()
+    llm_model = (model or config.llm_model).strip()
+    mode_value = (mode or "auto").strip().lower()
+    hitl_enabled_value = (
+        bool(hitl_enabled) if hitl_enabled is not None else (config.hitl_default_mode != "none")
+    )
+
+    if llm_provider not in {"openai", "anthropic", "groq", "ollama", "mock"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported LLM provider"
+        )
+    if mode_value not in {"auto", "chat"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported mode")
 
     session_id = str(uuid4())
     stored_name = f"{session_id}{suffix}"
@@ -69,6 +88,11 @@ async def create_session(
         file_name=dataset_context.file_name,
         file_path=dataset_context.file_path,
         dataset_context=dataset_context,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        mode=mode_value,
+        hitl_enabled=hitl_enabled_value,
+        user_instructions=user_instructions.strip() if user_instructions else None,
     )
     store.upsert(record)
 
@@ -89,10 +113,12 @@ async def create_session(
 
 
 @router.get("", response_model=SessionListResponse)
-async def list_sessions(request: Request) -> SessionListResponse:
+async def list_sessions(request: Request, status: str | None = None) -> SessionListResponse:
     store = _get_store(request)
     sessions = []
     for rec in store.list():
+        if status and rec.status != status:
+            continue
         sessions.append(
             SessionRecordResponse(
                 session_id=rec.session_id,

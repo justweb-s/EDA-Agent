@@ -56,6 +56,12 @@ async def test_hitl_interrupt_and_resume(tmp_path: Path, monkeypatch: pytest.Mon
 
             assert status_value == "suspended"
 
+            filtered = await client.get("/sessions?status=suspended")
+            assert filtered.status_code == 200
+            sessions = filtered.json().get("sessions")
+            assert isinstance(sessions, list)
+            assert any(s.get("session_id") == session_id for s in sessions)
+
             intr = await client.get(f"/sessions/{session_id}/interrupt")
             assert intr.status_code == 200
             payload = intr.json()
@@ -100,6 +106,68 @@ async def test_hitl_interrupt_and_resume(tmp_path: Path, monkeypatch: pytest.Mon
 
             no_intr = await client.get(f"/sessions/{session_id}/interrupt")
             assert no_intr.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_hitl_resume_accepts_action_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HITL_DEFAULT_MODE", "plan_only")
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "checkpoints.db"))
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            csv_bytes = b"a,b\n1,2\n3,4\n"
+            resp = await client.post(
+                "/sessions",
+                files={"file": ("data.csv", csv_bytes, "text/csv")},
+                data={"hitl_enabled": "true"},
+            )
+            assert resp.status_code == 200
+            session_id = resp.json()["session_id"]
+
+            async with client.stream("GET", f"/sessions/{session_id}/stream") as sse:
+                async for line in sse.aiter_lines():
+                    if (
+                        line.startswith("event:")
+                        and line.split(":", 1)[1].strip() == "session_suspended"
+                    ):
+                        break
+
+            intr = await client.get(f"/sessions/{session_id}/interrupt")
+            assert intr.status_code == 200
+            payload = intr.json()
+            interrupt_id = None
+            for it in payload.get("interrupts", []):
+                resumable = it.get("resumable")
+                if resumable is not None:
+                    interrupt_id = str(resumable)
+                    break
+
+            resume = await client.post(
+                f"/sessions/{session_id}/resume",
+                json={
+                    "interrupt_id": interrupt_id,
+                    "action": "approve",
+                    "data": {"approved": True},
+                },
+            )
+            assert resume.status_code == 200
+
+            deadline = asyncio.get_event_loop().time() + 15.0
+            status_value = None
+            while asyncio.get_event_loop().time() < deadline:
+                s = await client.get(f"/sessions/{session_id}")
+                assert s.status_code == 200
+                status_value = s.json()["status"]
+                if status_value in {"completed", "failed"}:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert status_value == "completed"
 
 
 @pytest.mark.asyncio

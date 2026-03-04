@@ -39,16 +39,28 @@ class EventTranslator:
                 items = [interrupt_payload]
 
             for item in items:
+                value = getattr(item, "value", item)
+                interrupt_type = None
+                if isinstance(value, dict):
+                    interrupt_type = value.get("type")
+
+                available_actions: list[str] = []
+                if interrupt_type == "plan_approval":
+                    available_actions = ["approve", "reject", "modify"]
+
                 out.append(
                     (
                         "hitl_interrupt",
                         {
                             "interrupt": {
-                                "value": getattr(item, "value", item),
+                                "value": value,
                                 "resumable": getattr(item, "resumable", None),
                                 "ns": getattr(item, "ns", None),
                                 "when": getattr(item, "when", None),
-                            }
+                            },
+                            "interrupt_type": interrupt_type,
+                            "data": value,
+                            "available_actions": available_actions,
                         },
                     )
                 )
@@ -75,20 +87,46 @@ class EventTranslator:
                 new_cells = cells[self._last_n_cells :]
                 self._last_n_cells = max(self._last_n_cells, len(cells))
                 for cell in new_cells:
-                    out.append(("cell_added", {"cell": cell.model_dump(mode="json")}))
-
-            if "final_notebook_path" in update and update.get("final_notebook_path"):
-                out.append(
-                    (
-                        "analysis_completed",
-                        {"notebook_path": str(update.get("final_notebook_path"))},
+                    cell_payload = cell.model_dump(mode="json")
+                    out.append(
+                        (
+                            "cell_added",
+                            {
+                                "cell": cell_payload,
+                                "cell_type": cell_payload.get("cell_type"),
+                                "content": cell_payload.get("source"),
+                                "outputs": cell_payload.get("outputs", []),
+                                "step_id": cell_payload.get("step_id"),
+                                "execution_count": cell_payload.get("execution_count"),
+                                "generated_at": cell_payload.get("generated_at"),
+                                "re_executable": cell_payload.get("re_executable"),
+                                "n_cells": self._last_n_cells,
+                            },
+                        )
                     )
-                )
 
             if "__interrupt__" in update:
                 interrupt_payload = update.get("__interrupt__")
                 if interrupt_payload is not None:
-                    out.append(("hitl_interrupt", {"interrupt": interrupt_payload}))
+                    interrupt_type = None
+                    if isinstance(interrupt_payload, dict):
+                        interrupt_type = interrupt_payload.get("type")
+
+                    available_actions = []
+                    if interrupt_type == "plan_approval":
+                        available_actions = ["approve", "reject", "modify"]
+
+                    out.append(
+                        (
+                            "hitl_interrupt",
+                            {
+                                "interrupt": interrupt_payload,
+                                "interrupt_type": interrupt_type,
+                                "data": interrupt_payload,
+                                "available_actions": available_actions,
+                            },
+                        )
+                    )
 
         return out
 

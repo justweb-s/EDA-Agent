@@ -22,5 +22,8 @@ uploads/
 outputs/
 *.log
 .DS_Store
+LOCAL_ROADMAP.md
+
+.vscode/
 
 .windsurf/
