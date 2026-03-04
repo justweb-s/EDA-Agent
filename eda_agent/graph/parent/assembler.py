@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from eda_agent.api.notebook_export import export_ipynb_bytes
 from eda_agent.config import EDAConfig
+from eda_agent.graph.coercion import coerce_session_metadata
 from eda_agent.graph.parent.state import EDAState
 from eda_agent.models.notebook import NotebookCell
 
@@ -15,7 +16,7 @@ def assemble_notebook(*args: Any, **kwargs: Any) -> Any:
     state = cast(EDAState, args[0] if args else kwargs.get("state"))
     config = EDAConfig()
 
-    session_metadata = state.get("session_metadata")
+    session_metadata = coerce_session_metadata(state.get("session_metadata"))
     session_id = (
         getattr(session_metadata, "session_id", None) if session_metadata is not None else None
     )

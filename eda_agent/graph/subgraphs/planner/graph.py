@@ -6,6 +6,7 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from eda_agent.graph.coercion import coerce_dataset_context
 from eda_agent.graph.subgraphs.planner.state import PlannerState
 from eda_agent.models.plan import EDAStep
 
@@ -14,7 +15,7 @@ def build_planner_subgraph(*args: Any, **kwargs: Any) -> Any:
     graph = StateGraph(PlannerState)
 
     def draft_plan(state: PlannerState) -> PlannerState:
-        dataset_context = state.get("dataset_context")
+        dataset_context = coerce_dataset_context(state.get("dataset_context"))
         if dataset_context is None:
             return {
                 "draft_plan": [],
