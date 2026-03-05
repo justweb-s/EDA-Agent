@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
@@ -26,12 +26,7 @@ def _is_kernel_crash_error(err: KernelExecutionError) -> bool:
     return any(marker in msg for marker in crash_markers)
 
 
-def executor_node(*args: Any, **kwargs: Any) -> Any:
-    state = cast(EDALoopState, args[0] if args else kwargs.get("state"))
-    config = cast(
-        RunnableConfig | None,
-        (args[1] if len(args) > 1 else kwargs.get("config")),
-    )
+def executor_node(state: EDALoopState, config: RunnableConfig | None = None) -> Any:
 
     generated_code = str(state.get("generated_code") or "")
     cfg = EDAConfig()

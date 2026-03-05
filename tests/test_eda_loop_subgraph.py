@@ -7,7 +7,11 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from eda_agent.graph.parent.supervisor import build_supervisor_graph
+from eda_agent.graph.subgraphs.eda_loop.graph import build_eda_loop_subgraph
 from eda_agent.models.dataset import BasicStats, ColumnInfo, DatasetContext
+from eda_agent.models.execution import ExecutionResult
+from eda_agent.models.notebook import CellOutput
+from eda_agent.models.plan import EDAStep
 from eda_agent.models.session import SessionMetadata
 
 
@@ -93,3 +97,89 @@ def test_supervisor_runs_eda_loop_and_assembles_notebook(
 
     expected = ((tmp_path / "outputs") / "notebooks" / f"eda-agent-{session_id}.ipynb").resolve()
     assert path.resolve() == expected
+
+
+def test_eda_loop_retries_then_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _fake_dataset_context(tmp_path)
+
+    plan = [
+        EDAStep(
+            step_id="dq",
+            section="Data quality",
+            title="Check nulls",
+            description="Check missing values.",
+            analysis_type="data_quality",
+            target_columns=[],
+            depends_on=[],
+            is_mandatory=True,
+            priority=10,
+        )
+    ]
+
+    class KernelStub:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, *_: object, **__: object) -> object:
+            self.calls += 1
+            if self.calls == 1:
+                return type(
+                    "RunResult",
+                    (),
+                    {
+                        "execution_count": 1,
+                        "cell_outputs": [CellOutput(output_type="error", text="NameError")],
+                        "execution": ExecutionResult(
+                            stdout="",
+                            stderr="Traceback: NameError",
+                            success=False,
+                            outputs=[],
+                        ),
+                    },
+                )()
+
+            return type(
+                "RunResult",
+                (),
+                {
+                    "execution_count": 2,
+                    "cell_outputs": [CellOutput(output_type="stream", text="ok")],
+                    "execution": ExecutionResult(
+                        stdout="ok\n",
+                        stderr="",
+                        success=True,
+                        outputs=[],
+                    ),
+                },
+            )()
+
+    kernel = KernelStub()
+    config = {"configurable": {"thread_id": "t-retry", "kernel": kernel}}
+
+    monkeypatch.setenv(
+        "MOCK_LLM_RESPONSES",
+        "["
+        '{"code":"df.head()","expected_output_description":"preview"},'
+        '{"verdict":"retry","findings_description":"error","retry_hint":"fix"},'
+        '{"code":"df.head()","expected_output_description":"preview"},'
+        '{"verdict":"success","findings_description":"ok"}'
+        "]",
+    )
+
+    graph = build_eda_loop_subgraph()
+    out = graph.invoke(
+        {
+            "eda_plan": plan,
+            "current_step_index": 0,
+            "dataset_context": ctx,
+            "notebook_cells": [],
+            "execution_history": [],
+            "retry_messages": [],
+            "local_retry_count": 0,
+        },
+        config,
+    )
+
+    assert kernel.calls == 2
+    assert int(out.get("current_step_index", -1)) == 1
+    assert len(list(out.get("execution_history", []))) == 1

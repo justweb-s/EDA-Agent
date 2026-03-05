@@ -54,6 +54,7 @@ def build_supervisor_graph(
                 "eda_plan": eda_plan,
                 "current_step_index": int(state.get("current_step_index", 0)),
                 "dataset_context": dataset_context,
+                "session_metadata": state.get("session_metadata"),
                 "notebook_cells": notebook_cells,
                 "execution_history": execution_history,
             },

@@ -60,6 +60,35 @@ class MockChatModel(SimpleChatModel):
             except Exception:
                 pass
 
+        if "TASK: CODER" in content:
+            cell: dict[str, Any] = {
+                "code": "df.head()",
+                "expected_output_description": "A small preview of the dataframe.",
+            }
+            return json.dumps(cell)
+
+        if "TASK: OBSERVER" in content:
+            if (
+                "EXECUTION_SUCCESS: false" in content
+                or ("STDERR:" in content and "Traceback" in content)
+            ):
+                verdict: dict[str, Any] = {
+                    "verdict": "retry",
+                    "findings_description": "The cell failed to execute.",
+                    "error_analysis": "Execution error detected.",
+                    "retry_hint": "Fix the error and retry the step.",
+                }
+                return json.dumps(verdict)
+
+            verdict = {
+                "verdict": "success",
+                "findings_description": "Step executed successfully.",
+                "key_statistics": {},
+                "charts_produced": [],
+                "anomalies_found": [],
+            }
+            return json.dumps(verdict)
+
         if "TASK: ANALYZE_DATASET" in content:
             return " ".join(
                 [

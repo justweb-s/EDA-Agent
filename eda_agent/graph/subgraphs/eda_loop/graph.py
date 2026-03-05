@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 
 from eda_agent.graph.subgraphs.eda_loop.coder import coder_node
 from eda_agent.graph.subgraphs.eda_loop.executor import executor_node
+from eda_agent.graph.subgraphs.eda_loop.findings_writer import findings_writer_node
 from eda_agent.graph.subgraphs.eda_loop.observer import observer_node
 from eda_agent.graph.subgraphs.eda_loop.state import EDALoopState
 from eda_agent.models.notebook import NotebookCell
@@ -82,12 +83,13 @@ def build_eda_loop_subgraph(*args: Any, **kwargs: Any) -> Any:
     def route_after_observer(state: EDALoopState) -> str:
         if state.get("observer_verdict") == "retry":
             return "coder"
-        return "select_step"
+        return "findings_writer"
 
     graph.add_node("select_step", select_step)
     graph.add_node("coder", coder_node)
     graph.add_node("executor", executor_node)
     graph.add_node("observer", observer_node)
+    graph.add_node("findings_writer", findings_writer_node)
 
     graph.set_entry_point("select_step")
     graph.add_conditional_edges(
@@ -105,8 +107,10 @@ def build_eda_loop_subgraph(*args: Any, **kwargs: Any) -> Any:
         route_after_observer,
         {
             "coder": "coder",
-            "select_step": "select_step",
+            "findings_writer": "findings_writer",
         },
     )
+
+    graph.add_edge("findings_writer", "select_step")
 
     return graph.compile()
