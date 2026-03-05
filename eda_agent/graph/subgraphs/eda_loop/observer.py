@@ -89,9 +89,7 @@ def observer_node(state: EDALoopState, config: RunnableConfig | None = None) -> 
             structured = llm.with_structured_output(ObserverVerdict)
             out = structured.invoke([HumanMessage(content=prompt)])
             verdict_obj = (
-                out
-                if isinstance(out, ObserverVerdict)
-                else ObserverVerdict.model_validate(out)
+                out if isinstance(out, ObserverVerdict) else ObserverVerdict.model_validate(out)
             )
     except Exception:
         verdict_obj = None

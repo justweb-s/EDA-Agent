@@ -68,9 +68,8 @@ class MockChatModel(SimpleChatModel):
             return json.dumps(cell)
 
         if "TASK: OBSERVER" in content:
-            if (
-                "EXECUTION_SUCCESS: false" in content
-                or ("STDERR:" in content and "Traceback" in content)
+            if "EXECUTION_SUCCESS: false" in content or (
+                "STDERR:" in content and "Traceback" in content
             ):
                 verdict: dict[str, Any] = {
                     "verdict": "retry",
